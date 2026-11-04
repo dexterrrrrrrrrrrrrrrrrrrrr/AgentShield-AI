@@ -1,0 +1,12 @@
+services:
+  mongo:
+    image: mongo:8.0
+    ports:
+      - "127.0.0.1:27017:27017"
+    command: ["mongod", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+    mem_limit: 512m
+    cpus: 1
+    volumes:
+      - mongo-data:/data/db
+volumes:
+  mongo-data:

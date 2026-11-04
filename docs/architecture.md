@@ -1,17 +1,49 @@
-# Architecture and scope
+# Phase 2 architecture and security
 
-The Next.js App Router frontend uses TypeScript and Tailwind CSS. Its client dashboard requests the FastAPI health endpoint with a five-second timeout, validates the status payload, and exposes checking, connected, and unavailable states. Navigation changes workspace panels locally; placeholders do not imply operational capabilities.
+## Request flow
 
-FastAPI exposes a typed `GET /health` response. It has no database dependency and performs no external AI calls. MongoDB persistence, LangGraph orchestration, Groq Llama API access, and Ollama are explicitly deferred. No API keys are needed for Phase 1.
+The existing Next.js App Router/TypeScript/Tailwind dashboard remains. Browser auth requests use the same-origin `/api` proxy to FastAPI. Protected Next.js layouts forward only the session cookie to `/api/auth/me` with no caching and a five-second timeout. Missing or invalid sessions redirect to login; API outages show an unavailable page rather than protected content. The backend always validates authorization independently. Profile data comes only from the verified session, never a client-provided user ID.
 
-## Trust boundaries
+## MongoDB
 
-CORS allows explicitly configured frontend origins and GET requests without credentials. CORS is a browser policy, not authentication. The health endpoint is intentionally public. The frontend sets anti-framing, MIME-sniffing, and referrer headers. Do not expose future privileged endpoints until authentication and authorization are designed. Never place credentials in `NEXT_PUBLIC_*` variables. Local env files, virtual environments, dependencies, and build output are ignored by Git.
+A single PyMongo `AsyncMongoClient` is created in FastAPI lifespan. Startup pings MongoDB and creates indexes, and failure prevents serving. Shutdown awaits client closure. The pool starts empty, permits at most 10 connections by default, retires idle connections after 30 seconds, and bounds connection, selection, queue, and socket waits. Runtime database failures return a generic 503 without URIs or credentials.
 
-## Validation
+Database: `agentshield_ai` (test databases have unique, enforced test prefixes).
 
-API tests cover the health contract, allowed and denied browser origins, preflight, absent execution routes, and read-only health behavior. Frontend validation includes ESLint, TypeScript, a production build, and a browser smoke check of API connection and navigation. No persistence or agent behavior should be inferred from these checks.
+| Collection        | Phase 2 fields and indexes                                                                        |
+| ----------------- | ------------------------------------------------------------------------------------------------- |
+| `users`           | Random UUID ID, normalized email, full name, Argon2id hash, UTC created date; unique email index  |
+| `sessions`        | Cryptographically random ID, owner user ID, UTC creation/expiry; owner index and expiry TTL index |
+| `security_events` | HMAC-pseudonymized fixed-window auth counters, category, count, expiry; TTL index                 |
+| `agent_configs`   | Reserved name only; no collection, model, endpoint, or operations                                 |
+| `execution_logs`  | Reserved name only; no collection, model, endpoint, or operations                                 |
+
+TTL deletion is asynchronous, so authorization explicitly checks session expiry on every request. The unique email index resolves concurrent registration races. Email normalization intentionally case-folds the local part as an application identity policy. Request models forbid extra fields and bound string lengths; queries use validated scalar values, not client-supplied query documents.
+
+## Passwords and tokens
+
+Argon2id uses 19 MiB, two iterations, and parallelism one, with per-password salts. Two hashing slots and offloaded work keep CPU-bound operations off the async event loop and bound active hash memory. Unknown users still verify a dummy hash; invalid credentials return one generic response. Outdated password hashes are upgraded after successful login. Passwords and confirmation values are never returned, logged, or included in validation errors.
+
+Access JWTs use HS256 with a required randomly generated secret of at least 32 bytes. Verification fixes the algorithm and requires issuer, audience, subject, session ID, issue time, not-before time, expiration, and an access-token purpose. Default lifetime is 15 minutes, maximum 30. No token is returned in JSON or stored in localStorage. Session records store no JWTs. JWT subject and session owner must match; a deleted/expired session or missing user rejects even a cryptographically valid token. Logout deletes only the current user's current session, immediately revoking captured copies.
+
+## Cookies and CSRF
+
+JWT cookies are HttpOnly, host-only, SameSite=Lax, and scoped to `/`. Production mode requires HTTPS origins and sets Secure with the `__Host-` prefix (no Domain attribute). HTTP cookies are allowed only by the explicit development/test mode. CSRF cookies are HttpOnly too; JavaScript receives the CSRF token from a same-origin JSON endpoint and retains it only for the request.
+
+All state-changing auth endpoints, including login and registration, require an exact allowed Origin and matching cookie/header CSRF token. The token is signed, expires after 30 minutes, uses a separate JWT audience/purpose, and is bound to the access token's session ID (or the anonymous state before login). Login clears the anonymous CSRF cookie. A signed token copied from another session fails. CORS uses exact origins and credentials, never a wildcard. Origin checking remains independent of CORS.
+
+Auth responses are not cached. The API limits actual POST body size to 16 KiB even for chunked requests and returns sanitized errors. Frontend/API headers prevent framing and MIME sniffing; React escapes profile strings. There are no user-controlled redirects, execution routes, or future data APIs.
+
+## Rate limits and resources
+
+Atomic MongoDB counters survive backend restarts and work across workers. Defaults: 5 login attempts per normalized email and 30 per peer IP in 300 seconds, plus 10 registrations per IP per 300 seconds. Counters use HMAC identifiers rather than raw emails/IPs and expire automatically. Fixed windows can permit a burst across a boundary; this is not distributed DDoS protection. All attempts count, including successful ones, with a Retry-After response when blocked.
+
+Do not enable trusted proxy headers blindly. The documented backend command disables them. Requests via the Next.js proxy share its peer IP and thus share the conservative IP budget; per-email limits still apply. A future public deployment needs explicit trusted proxy configuration and edge-level abuse controls. There is no Redis, Celery, refresh loop, or separate monitor. One native MongoDB process, a 256 MB storage cache, one backend worker, and one frontend process suit local development on 8 GB hardware. Browser tests use one worker.
+
+## Limits and future work
+
+Email validation establishes syntax, not ownership. Registration returns a generic duplicate-details message, but its status can still allow account-existence inference. No password reset, email verification, MFA, account administration, AI agents, sandbox execution, or persistent future-phase data features are implemented. These require separately approved work. Local MongoDB must remain on loopback; production database credentials, TLS, backup policy, HTTPS, and deployment hardening are operator responsibilities.
 
 ## Dependency maintenance
 
-The frontend lockfile pins the dependency tree. The minimatch override selects version 11.0.1 or newer to address GHSA-g3hv-75wg-m249 in development tooling. The ESLint 10 and TypeScript ESLint stack is validated with this override; rerun lint and the dependency audit when updating it. Python direct dependencies are pinned; transitive dependencies are resolved at installation time.
+The frontend lockfile fixes its full dependency tree. The minimatch override selects version 11.0.1 or newer for GHSA-g3hv-75wg-m249; rerun lint and audit after updates. Python direct versions are pinned while transitive versions resolve during installation. Both ecosystems are audited during validation and CI. Tests use disposable local databases and ephemeral test signing keys, never production credentials.

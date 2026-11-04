@@ -10,3 +10,8 @@ __pycache__/
 *.tsbuildinfo
 coverage/
 .DS_Store
+test-results/
+playwright-report/
+.data/
+*.log
+.ruff_cache/

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { LogoutButton, useUser } from "./session";
 import { useCallback, useEffect, useState } from "react";
 
 const sections = [
@@ -26,6 +27,7 @@ const descriptions: Record<Section, string> = {
 };
 
 export default function Dashboard() {
+  const user = useUser();
   const [active, setActive] = useState<Section>("Overview");
   const [connection, setConnection] = useState<Connection>("checking");
   const [attempt, setAttempt] = useState(0);
@@ -38,7 +40,7 @@ export default function Dashboard() {
     async function check() {
       setConnection("checking");
       try {
-        const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const base = process.env.NEXT_PUBLIC_API_URL || "/api";
         const response = await fetch(`${base.replace(/\/$/, "")}/health`, {
           signal: controller.signal,
           cache: "no-store",
@@ -106,7 +108,7 @@ export default function Dashboard() {
         <div className="mt-8 rounded-xl border border-slate-800 p-4 lg:absolute lg:right-5 lg:bottom-6 lg:left-5">
           <p className="text-sm font-medium">Foundation release</p>
           <p className="mt-2 text-xs leading-5 text-slate-400">
-            Phase 1 · Development workspace
+            Phase 2 · Development workspace
           </p>
         </div>
       </aside>
@@ -116,9 +118,18 @@ export default function Dashboard() {
             Workspace <span className="mx-2 text-slate-600">/</span>
             <span className="text-slate-200">{active}</span>
           </p>
-          <span className="rounded-full border border-teal-800 bg-teal-950/50 px-3 py-1 text-xs text-teal-300">
-            Phase 1
-          </span>
+          <div className="flex flex-wrap items-center gap-4">
+            <Link
+              href="/profile"
+              className="text-sm text-teal-300 hover:underline"
+            >
+              {user.full_name} · Profile
+            </Link>
+            <LogoutButton />
+            <span className="rounded-full border border-teal-800 bg-teal-950/50 px-3 py-1 text-xs text-teal-300">
+              Phase 2
+            </span>
+          </div>
         </header>
         <main className="mx-auto max-w-7xl px-6 py-9 lg:px-10">
           <p className="mb-2 text-xs font-semibold tracking-[0.2em] text-teal-400">
@@ -162,7 +173,7 @@ export default function Dashboard() {
                 {[
                   ["Agents", "Not enabled", "Agent integration is planned"],
                   ["Sandbox", "Not enabled", "Execution is planned"],
-                  ["Execution logs", "No activity", "No execution in Phase 1"],
+                  ["Execution logs", "No activity", "No execution in Phase 2"],
                   [
                     "Security events",
                     "Not collecting",
@@ -207,9 +218,10 @@ export default function Dashboard() {
                     Built with clear boundaries
                   </h2>
                   <p className="mt-4 text-sm leading-7 text-slate-400">
-                    This release establishes the dashboard and API connection.
-                    Agent creation, isolated execution, persistent storage, and
-                    security monitoring are planned for future phases.
+                    This release adds secure accounts and sessions to the
+                    dashboard and API connection. Agent creation, isolated
+                    execution, and security monitoring are planned for future
+                    phases.
                   </p>
                   <div className="mt-6 rounded-lg border border-teal-900 bg-teal-950/30 p-4 text-sm leading-6 text-teal-200">
                     No agents are running. No commands are executed from this
@@ -227,7 +239,7 @@ export default function Dashboard() {
                 {active} is coming in a future phase
               </h2>
               <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-slate-400">
-                {descriptions[active]} This section is a placeholder in Phase 1.
+                {descriptions[active]} This section is a placeholder in Phase 2.
               </p>
               <button
                 onClick={() => setActive("Overview")}
@@ -238,7 +250,7 @@ export default function Dashboard() {
             </section>
           )}
           <footer className="mt-10 text-xs text-slate-500">
-            AgentShield AI · Phase 1 foundation
+            AgentShield AI · Phase 2 foundation
           </footer>
         </main>
       </div>
