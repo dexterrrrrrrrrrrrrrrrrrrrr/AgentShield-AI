@@ -97,8 +97,10 @@ export default function Dashboard() {
             <button
               key={section}
               onClick={() =>
-                section === "Agent Playground"
-                  ? router.push("/playground")
+                section === "Agent Playground" || section === "Sandbox"
+                  ? router.push(
+                      section === "Sandbox" ? "/sandbox" : "/playground",
+                    )
                   : setActive(section)
               }
               aria-current={active === section ? "page" : undefined}
@@ -114,7 +116,7 @@ export default function Dashboard() {
         <div className="mt-8 rounded-xl border border-slate-800 p-4 lg:absolute lg:right-5 lg:bottom-6 lg:left-5">
           <p className="text-sm font-medium">Foundation release</p>
           <p className="mt-2 text-xs leading-5 text-slate-400">
-            Phase 3 · Development workspace
+            Phase 4 · Development workspace
           </p>
         </div>
       </aside>
@@ -133,7 +135,7 @@ export default function Dashboard() {
             </Link>
             <LogoutButton />
             <span className="rounded-full border border-teal-800 bg-teal-950/50 px-3 py-1 text-xs text-teal-300">
-              Phase 3
+              Phase 4
             </span>
           </div>
         </header>
@@ -182,8 +184,12 @@ export default function Dashboard() {
                     "Playground ready",
                     "Configure a provider to start",
                   ],
-                  ["Sandbox", "Not enabled", "Execution is planned"],
-                  ["Execution logs", "No activity", "No execution in Phase 3"],
+                  [
+                    "Sandbox",
+                    "Policy-gated",
+                    "Readiness required before execution",
+                  ],
+                  ["Execution logs", "No activity", "No execution in Phase 4"],
                   [
                     "Security events",
                     "Not collecting",
@@ -213,8 +219,13 @@ export default function Dashboard() {
                       <button
                         key={section}
                         onClick={() =>
-                          section === "Agent Playground"
-                            ? router.push("/playground")
+                          section === "Agent Playground" ||
+                          section === "Sandbox"
+                            ? router.push(
+                                section === "Sandbox"
+                                  ? "/sandbox"
+                                  : "/playground",
+                              )
                             : setActive(section)
                         }
                         className="flex w-full items-center justify-between rounded-lg bg-slate-900 px-4 py-4 text-left text-sm hover:bg-slate-800"
@@ -233,8 +244,9 @@ export default function Dashboard() {
                   </h2>
                   <p className="mt-4 text-sm leading-7 text-slate-400">
                     Run bounded text agents with permission-checked tools and
-                    saved conversations. Isolated execution and security
-                    monitoring remain planned for future phases.
+                    saved conversations. Sandbox execution requires verified
+                    isolation and policy approval. Security monitoring remains
+                    planned.
                   </p>
                   <div className="mt-6 rounded-lg border border-teal-900 bg-teal-950/30 p-4 text-sm leading-6 text-teal-200">
                     Agents can use only the approved text tools. Shell commands
@@ -252,7 +264,7 @@ export default function Dashboard() {
                 {active} is coming in a future phase
               </h2>
               <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-slate-400">
-                {descriptions[active]} This section is a placeholder in Phase 3.
+                {descriptions[active]} This section is a placeholder in Phase 4.
               </p>
               <button
                 onClick={() => setActive("Overview")}
@@ -263,7 +275,7 @@ export default function Dashboard() {
             </section>
           )}
           <footer className="mt-10 text-xs text-slate-500">
-            AgentShield AI · Phase 3 foundation
+            AgentShield AI · Phase 4 foundation
           </footer>
         </main>
       </div>

@@ -8,7 +8,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field
 
-NAMES = ("calculator", "summarize_text", "format_json")
+NAMES = ("calculator", "summarize_text", "format_json", "python_sandbox")
 
 
 class TextInput(BaseModel):
@@ -60,6 +60,8 @@ def calculate(text: str) -> str:
 def execute(request: ToolRequest, allowed: list[str]) -> str:
     if request.name not in NAMES or request.name not in allowed:
         raise ToolRejected("Tool is unknown or not permitted")
+    if request.name == "python_sandbox":
+        raise ToolRejected("Sandbox requires authenticated async policy dispatch")
     data = TextInput.model_validate(request.arguments)
     try:
         if request.name == "calculator":
@@ -94,8 +96,18 @@ def definitions(allowed: list[str]) -> list[dict]:
                     "calculator": "Bounded arithmetic using +, -, *, / and parentheses only.",
                     "summarize_text": "Extract the first three sentences of supplied text locally.",
                     "format_json": "Validate and pretty-print supplied JSON text.",
+                    "python_sandbox": "Request isolated Python execution. Policy may require explicit human approval; never assume it ran.",
                 }[name],
-                "parameters": TextInput.model_json_schema(),
+                "parameters": (
+                    {
+                        "type": "object",
+                        "properties": {"code": {"type": "string", "maxLength": 32768}},
+                        "required": ["code"],
+                        "additionalProperties": False,
+                    }
+                    if name == "python_sandbox"
+                    else TextInput.model_json_schema()
+                ),
             },
         }
         for name in allowed

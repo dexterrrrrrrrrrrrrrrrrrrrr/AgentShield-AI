@@ -86,7 +86,12 @@ export default function Playground() {
         (await agentApi("/sessions", "POST", {
           provider,
           model: current.model,
-          allowed_tools: ["calculator", "summarize_text", "format_json"],
+          allowed_tools: [
+            "calculator",
+            "summarize_text",
+            "format_json",
+            "python_sandbox",
+          ],
         }));
       setSelected(session);
       const turn = await agentApi(`/sessions/${session.id}/messages`, "POST", {

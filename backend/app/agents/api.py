@@ -19,7 +19,7 @@ class SessionInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     provider: Literal["groq", "ollama"] = "groq"
     model: str = Field(min_length=1, max_length=100)
-    allowed_tools: list[str] = Field(default_factory=lambda: list(NAMES), max_length=3)
+    allowed_tools: list[str] = Field(default_factory=lambda: list(NAMES), max_length=4)
 
     @field_validator("allowed_tools")
     @classmethod
@@ -263,11 +263,22 @@ async def send(
             "created_at": utcnow(),
         }
         await db.agent_messages.insert_one(turn)
+
+        async def sandbox_dispatch(arguments):
+            from ..sandbox.policy import CodeRequest
+            from ..sandbox.service import SandboxService
+
+            code = CodeRequest.model_validate({**arguments, "agent_session_id": sid})
+            return await SandboxService(
+                db, s, request.app.state.sandbox_manager
+            ).request(uid, code)
+
         result = await request.app.state.agent_engine.run(
             locked["provider"],
             locked["model"],
             [*context, {"role": "user", "content": prompt}],
             locked["allowed_tools"],
+            sandbox_dispatch=sandbox_dispatch,
         )
         await db.agent_messages.update_one(
             {"_id": turn["_id"], "session_id": sid, "user_id": uid},

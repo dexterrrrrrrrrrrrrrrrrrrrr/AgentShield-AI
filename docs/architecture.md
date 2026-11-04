@@ -53,3 +53,7 @@ The frontend lockfile fixes its full dependency tree. The minimatch override sel
 See README.md for the complete agent API, limits, lifecycle, providers, tools, data flow, and security limitations. `app/agents/providers.py` owns external I/O and error normalization; `engine.py` compiles the bounded StateGraph; `tools.py` defines a closed text-only registry; `api.py` applies ownership/CSRF/rate checks, execution leases, quotas, and MongoDB persistence. Existing `current_identity`, `require_csrf`, `limit_attempts`, connection pooling, and protected layouts remain the security boundaries.
 
 `agent_sessions` and `agent_messages` use owner-prefixed indexes. A turn is persisted before provider I/O; events are persisted with the result, never raw chain-of-thought. Executions have no checkpointer service or external tracing. No paid service is selected automatically. A real Groq key and optional Ollama runtime are operator prerequisites for live checks; automated fixtures are explicitly isolated from the production entry point.
+
+## Phase 4 sandbox
+
+See [sandbox.md](sandbox.md) for the deterministic policy, approvals, limits, readiness gate, Docker lifecycle, isolated tests and explicit unverified security properties. The sandbox adapter is independent of authentication and safe text tools; unavailable infrastructure fails closed without preventing application startup.

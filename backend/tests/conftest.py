@@ -73,6 +73,9 @@ def client(settings):
             "agent_sessions",
             "agent_messages",
             "agent_configs",
+            "execution_logs",
+            "sandbox_approvals",
+            "sandbox_locks",
         ):
             client.portal.call(app.state.db[collection].delete_many, {})
 

@@ -42,6 +42,26 @@ class Settings(BaseSettings):
     agent_max_tool_calls: int = Field(default=3, ge=0, le=5)
     agent_user_limit: int = Field(default=10, ge=1, le=100)
 
+    sandbox_enabled: bool = False
+    sandbox_policy: Literal["deny", "approval", "allow"] = "approval"
+    sandbox_docker_url: str = "unix:///var/run/docker.sock"
+    sandbox_memory_mb: int = Field(default=128, ge=128, le=256)
+    sandbox_cpus: float = Field(default=1, ge=0.1, le=1)
+    sandbox_pids: int = Field(default=32, ge=8, le=64)
+    sandbox_timeout: int = Field(default=10, ge=1, le=15)
+    sandbox_output_bytes: int = Field(default=65536, ge=1024, le=65536)
+    sandbox_code_bytes: int = Field(default=32768, ge=1024, le=32768)
+    sandbox_retention_days: int = Field(default=7, ge=1, le=30)
+    sandbox_approval_seconds: int = Field(default=300, ge=30, le=600)
+    sandbox_user_limit: int = Field(default=5, ge=1, le=20)
+
+    @field_validator("sandbox_docker_url")
+    @classmethod
+    def local_docker(cls, value):
+        if not value.startswith("unix:///"):
+            raise ValueError("Only a local Unix Docker socket is permitted")
+        return value
+
     @field_validator("ollama_url")
     @classmethod
     def local_ollama(cls, value):

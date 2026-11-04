@@ -101,7 +101,6 @@ test("registration, password toggle, login, profile, preserved dashboard, mobile
     "agentshield_session",
   );
   for (const section of [
-    "Sandbox",
     "Execution Logs",
     "Security Monitoring",
     "Settings",

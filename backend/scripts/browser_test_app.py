@@ -33,6 +33,25 @@ def make_app():
     async def lifespan(app):
         async with original(app):
             app.state.agent_engine.providers = BrowserProvider()
+            from app.sandbox.manager import SandboxManager
+
+            class FakeSandbox:
+                def readiness(self):
+                    return {"ready": True, "code": "READY"}
+
+                def execute(self, code):
+                    return {
+                        "status": "completed",
+                        "stdout": "Mocked sandbox output\n",
+                        "stderr": "",
+                        "exit_code": 0,
+                        "duration": 0.01,
+                    }
+
+            app.state.settings.sandbox_enabled = True
+            app.state.sandbox_manager = SandboxManager(
+                app.state.settings, FakeSandbox()
+            )
             yield
 
     app.router.lifespan_context = lifespan

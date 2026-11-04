@@ -348,6 +348,8 @@ def test_indexes_and_future_collections(client):
         "agent_sessions",
         "agent_messages",
         "agent_configs",
+        "execution_logs",
+        "sandbox_approvals",
     }
 
 

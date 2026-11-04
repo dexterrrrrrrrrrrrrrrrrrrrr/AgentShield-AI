@@ -8,3 +8,5 @@ email-validator==2.3.0
 
 groq==1.7.0
 langgraph==1.2.19
+
+docker==7.1.0

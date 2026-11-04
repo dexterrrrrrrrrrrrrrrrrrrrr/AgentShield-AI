@@ -82,7 +82,7 @@ For a production frontend, use `npm run build` followed by `npm start`. Producti
 4. Open Profile to view full name, email, creation date (UTC), and authentication status.
 5. Sign out to revoke that session immediately. Other sessions remain valid. Sessions expire after 15 minutes by default; sign in again. There are no refresh tokens or localStorage tokens.
 
-The original overview, API health/retry behavior, and responsive layout are retained. Agent Playground is now functional at `/playground`; Sandbox, Execution Logs, Security Monitoring, and Settings remain placeholders. There is no shell, generated-code execution, or Docker sandbox functionality.
+The original overview, API health/retry behavior, and responsive layout are retained. Agent Playground is now functional at `/playground`; Execution Logs, Security Monitoring, and Settings remain placeholders. The sandbox interface is implemented but execution is disabled until verified. There is no shell, generated-code execution, or Docker sandbox functionality.
 
 ## API
 
@@ -126,7 +126,7 @@ Backend tests cover registration, duplicate races, input validation, password ha
 
 ## Security and resource decisions
 
-See [architecture and security](docs/architecture.md). The backend remains the authorization boundary; frontend redirects are an additional UI safeguard. Email syntax is validated, but email ownership verification, password reset, MFA, refresh tokens, and production deployment are outside this phase. No paid services, Redis, Celery, heavy monitoring, or sandbox execution are introduced. Phase 4 requires approval.
+See [architecture and security](docs/architecture.md). The backend remains the authorization boundary; frontend redirects are an additional UI safeguard. Email syntax is validated, but email ownership verification, password reset, MFA, refresh tokens, and production deployment are outside this phase. No paid services, Redis, Celery, heavy monitoring, or sandbox execution are introduced. Phase 5 requires approval.
 
 ## Phase 3: provider configuration
 
@@ -181,3 +181,11 @@ Multi-document writes use standalone MongoDB without transactions. A database/pr
 Run the backend and frontend commands above. Provider tests use the official Groq SDK with mocked HTTP responses; graph/API tests use injected providers and **real local MongoDB**. The test suite reuses a disposable database's collection files within one run and clears documents between tests, then drops the database at the end to avoid delayed WiredTiger file cleanup exhausting descriptors. Browser tests explicitly launch `scripts.browser_test_app:make_app` in an isolated test database; the normal `app.main:app` entry point never enables a fake provider. Browser tests cover a tool run, persisted/reloaded history, loading indicators, errors/retry, clearing, route protection, mobile layout, and auth regressions.
 
 A real Groq smoke test is separate: after securely configuring a free-tier key and network access, sign in and send one short task with Groq in the playground. A mocked provider test is not evidence of a real Groq request. Ollama availability/model behavior must also be tested separately on a machine where it is installed. Phase 4 remains unimplemented and requires approval.
+
+## Phase 4: fail-closed Python sandbox
+
+The `/sandbox` page and `python_sandbox` agent tool use an independent policy service, expiring single-use approvals, MongoDB execution history, and a Docker SDK adapter. Real execution is **disabled by default**. Existing auth, dashboards, and safe text tools require no working sandbox daemon.
+
+Read [sandbox architecture, security, APIs and Colima/M2 validation](docs/sandbox.md) before enabling execution. The current managed daemon lacks effective cgroup controls, so real sandbox tests are **BLOCKED**; no secure Docker-isolation claim is made. M2/Colima has not been validated. No managed daemon configuration is changed by this implementation. Available unit/API/browser tests use explicitly injected Docker mocks with real MongoDB and existing authentication.
+
+Start the project using the existing MongoDB, backend and frontend commands above. New settings are in `.env.example`; keep `SANDBOX_ENABLED=false` until the separate readiness and real-integration procedure succeeds. The reviewed runtime digest must be pulled by an operator; HTTP requests never pull or select images. Docker containers are not a complete security boundary against malicious code. Phase 5 requires separate approval.
