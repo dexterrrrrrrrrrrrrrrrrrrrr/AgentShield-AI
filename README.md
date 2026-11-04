@@ -189,3 +189,14 @@ The `/sandbox` page and `python_sandbox` agent tool use an independent policy se
 Read [sandbox architecture, security, APIs and Colima/M2 validation](docs/sandbox.md) before enabling execution. The current managed daemon lacks effective cgroup controls, so real sandbox tests are **BLOCKED**; no secure Docker-isolation claim is made. M2/Colima has not been validated. No managed daemon configuration is changed by this implementation. Available unit/API/browser tests use explicitly injected Docker mocks with real MongoDB and existing authentication.
 
 Start the project using the existing MongoDB, backend and frontend commands above. New settings are in `.env.example`; keep `SANDBOX_ENABLED=false` until the separate readiness and real-integration procedure succeeds. The reviewed runtime digest must be pulled by an operator; HTTP requests never pull or select images. Docker containers are not a complete security boundary against malicious code. Phase 5 requires separate approval.
+
+### Validate Phase 4 on your own Colima runtime
+
+With Colima already running, Python 3.12 installed, and the local backend stopped, run from this repository root:
+
+```sh
+git pull --ff-only origin main
+bash scripts/validate-phase4-colima.sh
+```
+
+This checks real effective cgroup limits before any container test program, then verifies actual resource enforcement, restrictions, timeouts, output and cleanup. It does not use MongoDB or application credentials, change the daemon, or enable real execution. Return the generated `phase4-validation-*.json` report for review. See [detailed instructions and exit codes](docs/sandbox.md#automated-colima-validation-recommended). Mac validation has not been performed in the cloud.

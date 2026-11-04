@@ -172,6 +172,9 @@ def fake_client(settings, output=b"hello\n", bad=False):
                 "Privileged": bad,
                 "NetworkMode": kw["network_mode"],
                 "PidMode": "",
+                "CgroupnsMode": "private",
+                "MemorySwap": kw["memswap_limit"],
+                "CapAdd": None,
                 "IpcMode": "private",
                 "Binds": None,
                 "CapDrop": kw["cap_drop"],
@@ -189,9 +192,11 @@ def fake_client(settings, output=b"hello\n", bad=False):
         return c
 
     client = Mock()
+    client.containers.list.return_value = []
     client.containers.create.side_effect = create
     client.info.return_value = {
         "MemoryLimit": True,
+        "SwapLimit": True,
         "PidsLimit": True,
         "CPUCfsQuota": True,
         "CgroupDriver": "systemd",
@@ -223,9 +228,11 @@ def test_mock_readiness_checks_effective_limits_and_daemon(settings):
     values = {
         "uid": 65534,
         "memory": "134217728",
+        "swap": "0",
         "pids": "32",
         "cpu": "100000 100000",
         "ro": True,
+        "workspace": True,
         "network": True,
         "nnp": True,
         "caps": True,

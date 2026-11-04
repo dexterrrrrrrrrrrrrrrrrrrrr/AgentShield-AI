@@ -58,7 +58,7 @@ def evaluate(
         or tool != "python_sandbox"
         or size > max_size
         or not quota
-        or mode == "deny"
+        or mode not in ("approval", "allow")
     ):
         return Decision.DENY
     if not enabled or not available:

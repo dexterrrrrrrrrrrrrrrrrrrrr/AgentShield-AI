@@ -87,3 +87,24 @@ colima stop
 ```
 
 Never mount host home, SSH/cloud credentials, env files, Docker sockets, or MongoDB volumes into execution containers. Do not delete the MongoDB data volume for sandbox cleanup. If a shared `sandbox_locks` record has `blocked: true`, keep execution disabled until an operator confirms no sandbox containers remain and fixes the daemon. Only then clear the `blocked` field on the single infrastructure record `_id: execution`, preserve other data, restart the backend and rerun readiness plus real tests.
+
+## Automated Colima validation (recommended)
+
+From your **Mac repository root**, after stopping the local AgentShield backend/tests so there are no active sandbox containers:
+
+```sh
+git pull --ff-only origin main
+bash scripts/validate-phase4-colima.sh
+```
+
+Prerequisites are an already-running Colima Docker runtime with cgroup v2, Docker CLI, Python 3.12 (`brew install python@3.12` if needed), and Internet access for pinned dependencies/the pinned runtime image. The script does not start, reconfigure, or stop Colima and does not enable application execution. It installs backend dependencies into `backend/.venv` and selects the existing `colima` context's Unix socket explicitly without changing your global Docker context. For another Colima profile use `COLIMA_CONTEXT=your-context bash scripts/validate-phase4-colima.sh`.
+
+The validator uses fresh test settings and a random, ephemeral signing key; it does not load `backend/.env`, connect to MongoDB, change your app settings, or use your existing accounts. Stop the backend first: existing labeled sandbox containers cause refusal, not automatic removal. The script may explicitly pull only the reviewed Python image digest if missing. Runtime-image pulling here is an operator action, never an application-request fallback.
+
+It first checks the daemon controllers and runs only the fixed trusted readiness probe. The probe verifies actual memory, zero swap allowance, PID and CPU cgroup values, UID, capabilities, NoNewPrivs, seccomp, network interfaces, and read-only root mount flags. If any check fails, it exits **2 / BLOCKED** without starting the test programs. Each later test rechecks readiness and the actual execution container's guard before code runs.
+
+After preflight succeeds, twelve harmless container-only cases verify output/error capture, syntax errors, an actual sleeping-program wall timeout, truncation, memory-limit OOM evidence, non-root UID, read-only root/writable tmpfs, denied external networking, denied privilege elevation, actual PID-limit fork rejection (bounded at 40 attempts), and actual CPU throttling. The CPU test temporarily requests **0.5 CPU**, tighter than the one-CPU maximum, and requires both kernel throttling counters and elapsed-time evidence. Memory/PID tests run only after the effective memory and PID limits have been checked; they never run on the host. No host shell evaluates submitted Python. Every case checks cleanup and stops the sequence on failure.
+
+The command exits **0 / PASS**, **1 / FAIL**, or **2 / BLOCKED**. It writes a private timestamped `phase4-validation-*.json` in the repository root (ignored by Git) containing observed limits, per-case results, durations and cleanup checks. No application credentials or user data are included. Send that report's contents back for review. A PASS is evidence for that tested runtime/configuration only, not proof against kernel/container escapes or a claim that the cloud runtime is suitable.
+
+If blocked/failed, leave `SANDBOX_ENABLED=false`. Do not remove restrictions to make the script pass. Inspect the reported stage, Docker context, pinned image, and leftover containers. Remove only individually reviewed sandbox IDs as described above; never remove your MongoDB volume. After a process/VM crash, readiness now refuses orphaned labeled containers even after an infrastructure lease expires. Repeated cancellation retains capacity until cleanup finishes. Native Mac/Colima validation is still pending until you run the command and return its report.

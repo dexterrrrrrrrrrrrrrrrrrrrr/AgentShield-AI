@@ -20,7 +20,9 @@ from .policy import IMAGE
 CHECK = """import os,json,pathlib,sys
 p=pathlib.Path('/sys/fs/cgroup')
 status=pathlib.Path('/proc/self/status').read_text()
-v=dict(uid=os.getuid(),memory=(p/'memory.max').read_text().strip(),pids=(p/'pids.max').read_text().strip(),cpu=(p/'cpu.max').read_text().strip(),ro=bool(os.statvfs('/').f_flag & os.ST_RDONLY),network=set(x.name for x in pathlib.Path('/sys/class/net').iterdir()) <= {'lo'},nnp='NoNewPrivs:\\t1' in status,caps='CapEff:\\t0000000000000000' in status,seccomp='Seccomp:\\t2' in status)
+tmp=os.statvfs('/tmp')
+workspace=all(tmp.f_flag & flag for flag in (os.ST_NOEXEC,os.ST_NOSUID,os.ST_NODEV)) and tmp.f_blocks*tmp.f_frsize<=16777216
+v=dict(workspace=workspace,uid=os.getuid(),memory=(p/'memory.max').read_text().strip(),swap=(p/'memory.swap.max').read_text().strip(),pids=(p/'pids.max').read_text().strip(),cpu=(p/'cpu.max').read_text().strip(),ro=bool(os.statvfs('/').f_flag & os.ST_RDONLY),network=set(x.name for x in pathlib.Path('/sys/class/net').iterdir()) <= {'lo'},nnp='NoNewPrivs:\\t1' in status,caps='CapEff:\\t0000000000000000' in status,seccomp='Seccomp:\\t2' in status)
 """
 PROBE = CHECK + "\nprint(json.dumps(v))"
 # This string is evaluated ONLY by Python inside the isolated container.
@@ -29,7 +31,7 @@ RUNNER = (
     CHECK
     + """
 e=json.loads(sys.argv[2]); q,period=map(int,v['cpu'].split())
-if not (v['uid']==65534 and int(v['memory'])==e['memory'] and int(v['pids'])==e['pids'] and q/period<=e['cpus']+0.001 and all(v[k] for k in ('ro','network','nnp','caps','seccomp'))):
+if not (v['uid']==65534 and int(v['memory'])==e['memory'] and int(v['swap'])==0 and int(v['pids'])==e['pids'] and q/period<=e['cpus']+0.001 and all(v[k] for k in ('ro','workspace','network','nnp','caps','seccomp'))):
     raise SystemExit(125)
 import resource
 resource.setrlimit(resource.RLIMIT_CPU,(e['timeout']+1,e['timeout']+1))
@@ -45,6 +47,7 @@ class Unavailable(Exception):
 class DockerAdapter:
     def __init__(self, settings, factory=None):
         self.s = settings
+        self.last_probe = None
         self.factory = factory or (
             lambda: docker.DockerClient(base_url=settings.sandbox_docker_url, timeout=2)
         )
@@ -158,6 +161,9 @@ class DockerAdapter:
                 or host["Privileged"]
                 or host["NetworkMode"] != "none"
                 or host.get("PidMode")
+                or host.get("CgroupnsMode") != "private"
+                or host.get("CapAdd")
+                or host.get("MemorySwap") != self.s.sandbox_memory_mb * 1048576
                 or host.get("IpcMode") != "private"
                 or host.get("Binds")
                 or any(
@@ -169,7 +175,8 @@ class DockerAdapter:
                 or host["PidsLimit"] != self.s.sandbox_pids
                 or host["NanoCpus"] != int(self.s.sandbox_cpus * 1e9)
                 or not any(
-                    x.startswith("no-new-privileges") for x in host["SecurityOpt"]
+                    x in ("no-new-privileges", "no-new-privileges:true")
+                    for x in host["SecurityOpt"]
                 )
                 or any(
                     "=" in e
@@ -203,6 +210,7 @@ class DockerAdapter:
                     if exc.status_code != 409:
                         raise
             result = container.wait(timeout=2)
+            container.reload()
             return dict(
                 status="timed_out"
                 if timed_out
@@ -216,6 +224,7 @@ class DockerAdapter:
                 exit_code=result["StatusCode"],
                 duration=round(time.monotonic() - started, 3),
                 truncated=truncated,
+                oom_killed=bool(container.attrs["State"].get("OOMKilled", False)),
                 error_category="TIMEOUT"
                 if timed_out
                 else "OUTPUT_LIMIT"
@@ -233,29 +242,42 @@ class DockerAdapter:
                     container.remove(force=True, v=True)
 
     def readiness(self):
+        self.last_probe = None
         client = None
         try:
             client = self.factory()
             info = client.info()
             if (
                 not all(
-                    info.get(k) for k in ("MemoryLimit", "PidsLimit", "CPUCfsQuota")
+                    info.get(k)
+                    for k in ("MemoryLimit", "SwapLimit", "PidsLimit", "CPUCfsQuota")
                 )
                 or info.get("CgroupDriver") == "none"
                 or str(info.get("CgroupVersion")) != "2"
             ):
                 raise Unavailable("Required cgroup-v2 controllers are unavailable")
+            if client.containers.list(
+                all=True, filters={"label": "agentshield.sandbox=true"}
+            ):
+                raise Unavailable(
+                    "Existing sandbox containers require operator recovery"
+                )
             client.images.get(IMAGE)  # No auto-pull and no user-selected image.
             result = self._run(client, PROBE, probe=True)
             v = json.loads(result["stdout"])
+            self.last_probe = v
             quota, period = map(int, v["cpu"].split())
             if (
                 result["status"] != "completed"
                 or v["uid"] != 65534
                 or int(v["memory"]) != self.s.sandbox_memory_mb * 1048576
+                or int(v["swap"]) != 0
                 or int(v["pids"]) != self.s.sandbox_pids
                 or quota / period > self.s.sandbox_cpus + 0.001
-                or not all(v[k] for k in ("ro", "network", "nnp", "caps", "seccomp"))
+                or not all(
+                    v[k]
+                    for k in ("ro", "workspace", "network", "nnp", "caps", "seccomp")
+                )
             ):
                 raise Unavailable("Effective isolation limits do not match")
             return {"ready": True, "code": "READY"}
@@ -286,6 +308,22 @@ class SandboxManager:
         self.lock = asyncio.Lock()
         self.failed = False
 
+    async def _drain(self, task):
+        # Repeated cancellation must never release capacity before the lifecycle
+        # thread confirms cleanup. Cancellation remains observable to the caller.
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                self.failed = True
+                break
+        try:
+            task.result()
+        except BaseException:
+            self.failed = True
+
     async def readiness(self):
         if not self.s.sandbox_enabled or self.failed:
             return {"ready": False, "code": "SANDBOX_UNAVAILABLE"}
@@ -296,10 +334,7 @@ class SandboxManager:
             try:
                 return await asyncio.shield(task)
             except asyncio.CancelledError:
-                try:
-                    await asyncio.shield(task)
-                except Exception:
-                    self.failed = True
+                await self._drain(task)
                 raise
 
     async def execute(self, code):
@@ -313,10 +348,7 @@ class SandboxManager:
                 return await asyncio.shield(task)
             except asyncio.CancelledError:
                 # The worker owns cleanup. Keep capacity locked until it ends.
-                try:
-                    await asyncio.shield(task)
-                except Exception:
-                    self.failed = True
+                await self._drain(task)
                 raise
             except Exception:
                 self.failed = True

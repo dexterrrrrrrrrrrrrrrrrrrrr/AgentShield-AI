@@ -15,3 +15,5 @@ playwright-report/
 .data/
 *.log
 .ruff_cache/
+
+phase4-validation-*.json
