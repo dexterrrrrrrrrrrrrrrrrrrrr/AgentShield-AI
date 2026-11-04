@@ -14,15 +14,19 @@ import docker
 from docker.types import LogConfig, Ulimit
 
 from .policy import IMAGE
+from .readiness import supports_v2_probe
 
 # Fixed trusted probe only, not model/user-controlled. Namespaced cgroup-v2
 # files must reflect the requested limits, rather than the host's limits.
 CHECK = """import os,json,pathlib,sys
+membership=pathlib.Path('/proc/self/cgroup').read_text().splitlines()
+cgroup_path=next(line.split(':',2)[2] for line in membership if line.startswith('0::'))
+if cgroup_path!='/': raise RuntimeError('Expected private cgroup namespace root')
 p=pathlib.Path('/sys/fs/cgroup')
 status=pathlib.Path('/proc/self/status').read_text()
 tmp=os.statvfs('/tmp')
 workspace=all(tmp.f_flag & flag for flag in (os.ST_NOEXEC,os.ST_NOSUID,os.ST_NODEV)) and tmp.f_blocks*tmp.f_frsize<=16777216
-v=dict(workspace=workspace,uid=os.getuid(),memory=(p/'memory.max').read_text().strip(),swap=(p/'memory.swap.max').read_text().strip(),pids=(p/'pids.max').read_text().strip(),cpu=(p/'cpu.max').read_text().strip(),ro=bool(os.statvfs('/').f_flag & os.ST_RDONLY),network=set(x.name for x in pathlib.Path('/sys/class/net').iterdir()) <= {'lo'},nnp='NoNewPrivs:\\t1' in status,caps='CapEff:\\t0000000000000000' in status,seccomp='Seccomp:\\t2' in status)
+v=dict(cgroup_path=cgroup_path,workspace=workspace,uid=os.getuid(),memory=(p/'memory.max').read_text().strip(),swap=(p/'memory.swap.max').read_text().strip(),pids=(p/'pids.max').read_text().strip(),cpu=(p/'cpu.max').read_text().strip(),ro=bool(os.statvfs('/').f_flag & os.ST_RDONLY),network=set(x.name for x in pathlib.Path('/sys/class/net').iterdir()) <= {'lo'},nnp='NoNewPrivs:\\t1' in status,caps='CapEff:\\t0000000000000000' in status,seccomp='Seccomp:\\t2' in status)
 """
 PROBE = CHECK + "\nprint(json.dumps(v))"
 # This string is evaluated ONLY by Python inside the isolated container.
@@ -31,7 +35,7 @@ RUNNER = (
     CHECK
     + """
 e=json.loads(sys.argv[2]); q,period=map(int,v['cpu'].split())
-if not (v['uid']==65534 and int(v['memory'])==e['memory'] and int(v['swap'])==0 and int(v['pids'])==e['pids'] and q/period<=e['cpus']+0.001 and all(v[k] for k in ('ro','workspace','network','nnp','caps','seccomp'))):
+if not (v['uid']==65534 and int(v['memory'])==e['memory'] and int(v['swap'])==0 and int(v['pids'])==e['pids'] and q>0 and period>0 and q/period<=e['cpus']+0.001 and all(v[k] for k in ('ro','workspace','network','nnp','caps','seccomp'))):
     raise SystemExit(125)
 import resource
 resource.setrlimit(resource.RLIMIT_CPU,(e['timeout']+1,e['timeout']+1))
@@ -247,15 +251,8 @@ class DockerAdapter:
         try:
             client = self.factory()
             info = client.info()
-            if (
-                not all(
-                    info.get(k)
-                    for k in ("MemoryLimit", "SwapLimit", "PidsLimit", "CPUCfsQuota")
-                )
-                or info.get("CgroupDriver") == "none"
-                or str(info.get("CgroupVersion")) != "2"
-            ):
-                raise Unavailable("Required cgroup-v2 controllers are unavailable")
+            if not supports_v2_probe(info):
+                raise Unavailable("A supported cgroup-v2 namespace is required")
             if client.containers.list(
                 all=True, filters={"label": "agentshield.sandbox=true"}
             ):
@@ -269,10 +266,13 @@ class DockerAdapter:
             quota, period = map(int, v["cpu"].split())
             if (
                 result["status"] != "completed"
+                or v["cgroup_path"] != "/"
                 or v["uid"] != 65534
                 or int(v["memory"]) != self.s.sandbox_memory_mb * 1048576
                 or int(v["swap"]) != 0
                 or int(v["pids"]) != self.s.sandbox_pids
+                or quota <= 0
+                or period <= 0
                 or quota / period > self.s.sandbox_cpus + 0.001
                 or not all(
                     v[k]

@@ -16,6 +16,7 @@ import docker
 from app.config import Settings
 from app.sandbox.manager import DockerAdapter
 from app.sandbox.policy import IMAGE, limits
+from app.sandbox.readiness import daemon_observations, supports_v2_probe
 
 
 def validation_settings(url):
@@ -106,27 +107,10 @@ def validate(settings, client, adapter_factory=DockerAdapter):
     }
     clean(client)
     info = client.info()
-    report["daemon"] = {
-        k: info.get(k)
-        for k in (
-            "CgroupDriver",
-            "CgroupVersion",
-            "MemoryLimit",
-            "SwapLimit",
-            "PidsLimit",
-            "CPUCfsQuota",
-        )
-    }
-    if (
-        not all(
-            info.get(k)
-            for k in ("MemoryLimit", "SwapLimit", "PidsLimit", "CPUCfsQuota")
-        )
-        or info.get("CgroupDriver") == "none"
-        or str(info.get("CgroupVersion")) != "2"
-    ):
+    report["daemon"] = daemon_observations(info)
+    if not supports_v2_probe(info):
         report["reason"] = (
-            "SANDBOX_UNAVAILABLE: missing cgroup-v2 controllers; no test programs started"
+            "SANDBOX_UNAVAILABLE: supported cgroup-v2 namespace unavailable; no test programs started"
         )
         return report
     try:
@@ -139,7 +123,7 @@ def validate(settings, client, adapter_factory=DockerAdapter):
     report["observed"] = adapter.last_probe
     if not readiness["ready"]:
         report["reason"] = (
-            "SANDBOX_UNAVAILABLE: fixed trusted probe refused; no test programs started"
+            "SANDBOX_UNAVAILABLE: fixed trusted probe could not verify effective limits or isolation; no test programs started"
         )
         return report
     report["status"] = "FAILED"

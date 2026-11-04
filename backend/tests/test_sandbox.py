@@ -227,6 +227,7 @@ def test_mock_container_restrictions_and_cleanup(settings):
 def test_mock_readiness_checks_effective_limits_and_daemon(settings):
     values = {
         "uid": 65534,
+        "cgroup_path": "/",
         "memory": "134217728",
         "swap": "0",
         "pids": "32",

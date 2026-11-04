@@ -200,3 +200,5 @@ bash scripts/validate-phase4-colima.sh
 ```
 
 This checks real effective cgroup limits before any container test program, then verifies actual resource enforcement, restrictions, timeouts, output and cleanup. It does not use MongoDB or application credentials, change the daemon, or enable real execution. Return the generated `phase4-validation-*.json` report for review. See [detailed instructions and exit codes](docs/sandbox.md#automated-colima-validation-recommended). Mac validation has not been performed in the cloud.
+
+The Colima validator now handles Docker's correctly cased `CpuCfsQuota` field and uses effective in-container limits rather than optional daemon capability booleans to authorize execution. See [the detection fix](docs/sandbox.md#colima-cgroup-v2-detection-correction). Re-run the same validation command after pulling the fix; no resource restriction should be removed.
