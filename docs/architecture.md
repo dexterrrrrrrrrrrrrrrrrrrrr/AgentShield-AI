@@ -1,4 +1,4 @@
-# Phase 2 architecture and security
+# Phase 3 architecture and security
 
 ## Request flow
 
@@ -10,12 +10,12 @@ A single PyMongo `AsyncMongoClient` is created in FastAPI lifespan. Startup ping
 
 Database: `agentshield_ai` (test databases have unique, enforced test prefixes).
 
-| Collection        | Phase 2 fields and indexes                                                                        |
+| Collection        | Fields and indexes                                                                                |
 | ----------------- | ------------------------------------------------------------------------------------------------- |
 | `users`           | Random UUID ID, normalized email, full name, Argon2id hash, UTC created date; unique email index  |
 | `sessions`        | Cryptographically random ID, owner user ID, UTC creation/expiry; owner index and expiry TTL index |
 | `security_events` | HMAC-pseudonymized fixed-window auth counters, category, count, expiry; TTL index                 |
-| `agent_configs`   | Reserved name only; no collection, model, endpoint, or operations                                 |
+| `agent_configs`   | Per-owner atomic session quota; unique owner index                                                |
 | `execution_logs`  | Reserved name only; no collection, model, endpoint, or operations                                 |
 
 TTL deletion is asynchronous, so authorization explicitly checks session expiry on every request. The unique email index resolves concurrent registration races. Email normalization intentionally case-folds the local part as an application identity policy. Request models forbid extra fields and bound string lengths; queries use validated scalar values, not client-supplied query documents.
@@ -42,8 +42,14 @@ Do not enable trusted proxy headers blindly. The documented backend command disa
 
 ## Limits and future work
 
-Email validation establishes syntax, not ownership. Registration returns a generic duplicate-details message, but its status can still allow account-existence inference. No password reset, email verification, MFA, account administration, AI agents, sandbox execution, or persistent future-phase data features are implemented. These require separately approved work. Local MongoDB must remain on loopback; production database credentials, TLS, backup policy, HTTPS, and deployment hardening are operator responsibilities.
+Email validation establishes syntax, not ownership. Registration returns a generic duplicate-details message, but its status can still allow account-existence inference. No password reset, email verification, MFA, account administration, sandbox execution, or persistent future-phase data features are implemented. These require separately approved work. Local MongoDB must remain on loopback; production database credentials, TLS, backup policy, HTTPS, and deployment hardening are operator responsibilities.
 
 ## Dependency maintenance
 
 The frontend lockfile fixes its full dependency tree. The minimatch override selects version 11.0.1 or newer for GHSA-g3hv-75wg-m249; rerun lint and audit after updates. Python direct versions are pinned while transitive versions resolve during installation. Both ecosystems are audited during validation and CI. Tests use disposable local databases and ephemeral test signing keys, never production credentials.
+
+## Phase 3 agent engine
+
+See README.md for the complete agent API, limits, lifecycle, providers, tools, data flow, and security limitations. `app/agents/providers.py` owns external I/O and error normalization; `engine.py` compiles the bounded StateGraph; `tools.py` defines a closed text-only registry; `api.py` applies ownership/CSRF/rate checks, execution leases, quotas, and MongoDB persistence. Existing `current_identity`, `require_csrf`, `limit_attempts`, connection pooling, and protected layouts remain the security boundaries.
+
+`agent_sessions` and `agent_messages` use owner-prefixed indexes. A turn is persisted before provider I/O; events are persisted with the result, never raw chain-of-thought. Executions have no checkpointer service or external tracing. No paid service is selected automatically. A real Groq key and optional Ollama runtime are operator prerequisites for live checks; automated fixtures are explicitly isolated from the production entry point.

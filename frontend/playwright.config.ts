@@ -26,7 +26,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: `${python} -m uvicorn app.main:app --app-dir ../backend --host 127.0.0.1 --port 8001 --no-proxy-headers`,
+      command: `${python} -m uvicorn scripts.browser_test_app:make_app --factory --app-dir ../backend --host 127.0.0.1 --port 8001 --no-proxy-headers`,
       url: "http://127.0.0.1:8001/ready",
       timeout: 30000,
       env: {

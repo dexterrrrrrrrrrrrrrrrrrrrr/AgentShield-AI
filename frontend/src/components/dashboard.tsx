@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { LogoutButton, useUser } from "./session";
 import { useCallback, useEffect, useState } from "react";
 
@@ -28,6 +29,7 @@ const descriptions: Record<Section, string> = {
 
 export default function Dashboard() {
   const user = useUser();
+  const router = useRouter();
   const [active, setActive] = useState<Section>("Overview");
   const [connection, setConnection] = useState<Connection>("checking");
   const [attempt, setAttempt] = useState(0);
@@ -94,7 +96,11 @@ export default function Dashboard() {
           {sections.map((section, index) => (
             <button
               key={section}
-              onClick={() => setActive(section)}
+              onClick={() =>
+                section === "Agent Playground"
+                  ? router.push("/playground")
+                  : setActive(section)
+              }
               aria-current={active === section ? "page" : undefined}
               className={`flex items-center gap-3 rounded-lg px-4 py-3 text-left text-sm transition-colors ${active === section ? "bg-teal-400/10 text-teal-300" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
             >
@@ -108,7 +114,7 @@ export default function Dashboard() {
         <div className="mt-8 rounded-xl border border-slate-800 p-4 lg:absolute lg:right-5 lg:bottom-6 lg:left-5">
           <p className="text-sm font-medium">Foundation release</p>
           <p className="mt-2 text-xs leading-5 text-slate-400">
-            Phase 2 · Development workspace
+            Phase 3 · Development workspace
           </p>
         </div>
       </aside>
@@ -127,7 +133,7 @@ export default function Dashboard() {
             </Link>
             <LogoutButton />
             <span className="rounded-full border border-teal-800 bg-teal-950/50 px-3 py-1 text-xs text-teal-300">
-              Phase 2
+              Phase 3
             </span>
           </div>
         </header>
@@ -171,9 +177,13 @@ export default function Dashboard() {
             <>
               <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 {[
-                  ["Agents", "Not enabled", "Agent integration is planned"],
+                  [
+                    "Agents",
+                    "Playground ready",
+                    "Configure a provider to start",
+                  ],
                   ["Sandbox", "Not enabled", "Execution is planned"],
-                  ["Execution logs", "No activity", "No execution in Phase 2"],
+                  ["Execution logs", "No activity", "No execution in Phase 3"],
                   [
                     "Security events",
                     "Not collecting",
@@ -202,7 +212,11 @@ export default function Dashboard() {
                     {sections.slice(1, 4).map((section) => (
                       <button
                         key={section}
-                        onClick={() => setActive(section)}
+                        onClick={() =>
+                          section === "Agent Playground"
+                            ? router.push("/playground")
+                            : setActive(section)
+                        }
                         className="flex w-full items-center justify-between rounded-lg bg-slate-900 px-4 py-4 text-left text-sm hover:bg-slate-800"
                       >
                         <span>{section}</span>
@@ -218,14 +232,13 @@ export default function Dashboard() {
                     Built with clear boundaries
                   </h2>
                   <p className="mt-4 text-sm leading-7 text-slate-400">
-                    This release adds secure accounts and sessions to the
-                    dashboard and API connection. Agent creation, isolated
-                    execution, and security monitoring are planned for future
-                    phases.
+                    Run bounded text agents with permission-checked tools and
+                    saved conversations. Isolated execution and security
+                    monitoring remain planned for future phases.
                   </p>
                   <div className="mt-6 rounded-lg border border-teal-900 bg-teal-950/30 p-4 text-sm leading-6 text-teal-200">
-                    No agents are running. No commands are executed from this
-                    workspace.
+                    Agents can use only the approved text tools. Shell commands
+                    and sandbox execution are unavailable.
                   </div>
                 </section>
               </div>
@@ -239,7 +252,7 @@ export default function Dashboard() {
                 {active} is coming in a future phase
               </h2>
               <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-slate-400">
-                {descriptions[active]} This section is a placeholder in Phase 2.
+                {descriptions[active]} This section is a placeholder in Phase 3.
               </p>
               <button
                 onClick={() => setActive("Overview")}
@@ -250,7 +263,7 @@ export default function Dashboard() {
             </section>
           )}
           <footer className="mt-10 text-xs text-slate-500">
-            AgentShield AI · Phase 2 foundation
+            AgentShield AI · Phase 3 foundation
           </footer>
         </main>
       </div>

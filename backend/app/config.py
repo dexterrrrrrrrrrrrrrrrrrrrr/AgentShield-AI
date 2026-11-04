@@ -29,6 +29,35 @@ class Settings(BaseSettings):
     register_ip_limit: int = Field(default=10, ge=1, le=100)
     rate_window_seconds: int = Field(default=300, ge=10, le=3600)
 
+    groq_api_key: SecretStr = SecretStr("")
+    groq_model: str = Field(
+        default="llama-3.1-8b-instant", min_length=1, max_length=100
+    )
+    ollama_enabled: bool = False
+    ollama_model: str = "qwen2.5:1.5b"
+    ollama_url: str = "http://127.0.0.1:11434"
+    agent_provider_timeout: float = Field(default=15, ge=0.1, le=60)
+    agent_request_timeout: float = Field(default=45, ge=0.1, le=90)
+    agent_max_iterations: int = Field(default=4, ge=1, le=6)
+    agent_max_tool_calls: int = Field(default=3, ge=0, le=5)
+    agent_user_limit: int = Field(default=10, ge=1, le=100)
+
+    @field_validator("ollama_url")
+    @classmethod
+    def local_ollama(cls, value):
+        p = urlparse(value)
+        if (
+            p.scheme != "http"
+            or p.hostname not in ("localhost", "127.0.0.1", "::1")
+            or p.username
+            or p.password
+            or p.path not in ("", "/")
+            or p.query
+            or p.fragment
+        ):
+            raise ValueError("Ollama URL must be an HTTP loopback origin")
+        return value
+
     @field_validator("jwt_secret")
     @classmethod
     def strong_signing_key(cls, value: SecretStr) -> SecretStr:

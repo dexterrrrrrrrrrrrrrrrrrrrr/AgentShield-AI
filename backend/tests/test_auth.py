@@ -341,7 +341,14 @@ def test_indexes_and_future_collections(client):
     assert sessions["session_expiry"]["expireAfterSeconds"] == 0
     assert counters["rate_expiry"]["expireAfterSeconds"] == 0
     collections = client.portal.call(client.app.state.db.list_collection_names)
-    assert set(collections) == {"users", "sessions", "security_events"}
+    assert set(collections) == {
+        "users",
+        "sessions",
+        "security_events",
+        "agent_sessions",
+        "agent_messages",
+        "agent_configs",
+    }
 
 
 def test_database_startup_failure_is_safe(settings):

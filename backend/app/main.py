@@ -1,4 +1,4 @@
-"""AgentShield Phase 2 API. MongoDB is a required, verified dependency."""
+"""AgentShield Phase 3 API. MongoDB is a required, verified dependency."""
 
 from contextlib import asynccontextmanager
 
@@ -9,6 +9,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pymongo.errors import PyMongoError
 
+from .agents.api import router as agent_router
+from .agents.engine import Engine
 from .auth import router
 from .config import Settings
 from .database import connect_database
@@ -24,8 +26,8 @@ class BodyLimitMiddleware:
     async def __call__(self, scope, receive, send):
         if (
             scope["type"] != "http"
-            or scope["method"] != "POST"
-            or not scope["path"].startswith("/api/auth/")
+            or scope["method"] not in ("POST", "DELETE")
+            or not scope["path"].startswith(("/api/auth/", "/api/agent/"))
         ):
             return await self.app(scope, receive, send)
         chunks, size = [], 0
@@ -68,6 +70,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.settings = settings
         try:
             app.state.passwords = Passwords()
+            app.state.agent_engine = Engine(settings)
+            app.state.agent_active = 0
             yield
         finally:
             await client.close()
@@ -79,7 +83,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["Accept", "Content-Type", "X-CSRF-Token"],
     )
 
@@ -88,7 +92,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        if request.url.path.startswith("/api/auth/"):
+        if request.url.path.startswith(("/api/auth/", "/api/agent/")):
             response.headers["Cache-Control"] = "no-store"
             response.headers["Pragma"] = "no-cache"
         return response
@@ -124,6 +128,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ready"}
 
     app.include_router(router)
+    app.include_router(agent_router)
     return app
 
 
