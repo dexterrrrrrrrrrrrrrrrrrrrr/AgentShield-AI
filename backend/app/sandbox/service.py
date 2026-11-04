@@ -13,10 +13,15 @@ from .policy import CodeRequest, Decision, evaluate, fingerprint, limits
 
 
 class SandboxService:
-    def __init__(self, db, settings, manager):
+    def __init__(self, db, settings, manager, monitor=None):
         self.db = db
         self.s = settings
         self.manager = manager
+        if monitor is None:
+            from ..monitoring.events import Monitor
+
+            monitor = Monitor(db)
+        self.monitor = monitor
 
     async def owned(self, uid, payload):
         return not payload.agent_session_id or bool(
@@ -101,6 +106,25 @@ class SandboxService:
         if not available["ready"]:
             item.update(status="unavailable", error_category="SANDBOX_UNAVAILABLE")
         await self.db.execution_logs.insert_one(item)
+        await self.monitor.emit(
+            uid,
+            "policy_evaluation",
+            agent_id=payload.agent_session_id,
+            execution_id=eid,
+            tool=payload.tool,
+            decision=str(decision),
+            result=item["status"],
+        )
+        if decision == Decision.DENY:
+            await self.monitor.emit(
+                uid,
+                "tool_rejected",
+                agent_id=payload.agent_session_id,
+                execution_id=eid,
+                tool=payload.tool,
+                decision="DENY",
+                result=item["status"],
+            )
         if decision == Decision.REQUIRE_APPROVAL:
             await self.db.sandbox_approvals.insert_one(
                 {
@@ -111,6 +135,25 @@ class SandboxService:
                     "state": "pending",
                     "expires_at": now + timedelta(seconds=s.sandbox_approval_seconds),
                 }
+            )
+            await self.db.execution_logs.update_one(
+                {"_id": eid, "user_id": uid},
+                {
+                    "$set": {
+                        "approval_status": "pending",
+                        "approval_expires_at": now
+                        + timedelta(seconds=s.sandbox_approval_seconds),
+                    }
+                },
+            )
+            await self.monitor.emit(
+                uid,
+                "approval_required",
+                agent_id=payload.agent_session_id,
+                execution_id=eid,
+                tool=payload.tool,
+                decision="REQUIRE_APPROVAL",
+                result="pending_approval",
             )
         elif decision == Decision.ALLOW:
             item = await self.run(uid, eid, payload)
@@ -153,6 +196,19 @@ class SandboxService:
         )
         if not used:
             raise HTTPException(409, "Approval was already used")
+        await self.db.execution_logs.update_one(
+            {"_id": eid, "user_id": uid},
+            {"$set": {"approval_status": "approved", "decision_at": utcnow()}},
+        )
+        await self.monitor.emit(
+            uid,
+            "tool_approved",
+            agent_id=payload.agent_session_id,
+            execution_id=eid,
+            tool=payload.tool,
+            decision="ALLOW",
+            result="queued",
+        )
         return self.public(await self.run(uid, eid, payload))
 
     async def run(self, uid, eid, payload):
@@ -173,6 +229,15 @@ class SandboxService:
                     {"_id": eid, "user_id": uid},
                     {"$set": {"status": "running", "started_at": utcnow()}},
                 )
+                await self.monitor.emit(
+                    uid,
+                    "sandbox_started",
+                    agent_id=payload.agent_session_id,
+                    execution_id=eid,
+                    tool=payload.tool,
+                    decision="ALLOW",
+                    result="running",
+                )
                 result = await self.manager.execute(payload.code)
             except asyncio.CancelledError:
                 await self.db.execution_logs.update_one(
@@ -184,6 +249,15 @@ class SandboxService:
                             "error_category": "CANCELLED",
                         }
                     },
+                )
+                await self.monitor.emit(
+                    uid,
+                    "sandbox_failed",
+                    agent_id=payload.agent_session_id,
+                    execution_id=eid,
+                    tool=payload.tool,
+                    decision="ALLOW",
+                    result="interrupted",
                 )
                 raise
             except Unavailable:
@@ -218,7 +292,56 @@ class SandboxService:
             {"$set": result},
             return_document=ReturnDocument.AFTER,
         )
+        await self.monitor.emit(
+            uid,
+            "sandbox_completed" if item["status"] == "completed" else "sandbox_failed",
+            agent_id=payload.agent_session_id,
+            execution_id=eid,
+            tool=payload.tool,
+            decision="ALLOW",
+            result=item["status"],
+            duration=item.get("duration"),
+        )
         return item
+
+    async def reject(self, uid, eid, digest):
+        await self.quota(uid)
+        claimed = await self.db.sandbox_approvals.find_one_and_update(
+            {
+                "_id": eid,
+                "user_id": uid,
+                "request_hash": digest,
+                "state": "pending",
+                "expires_at": {"$gt": utcnow()},
+            },
+            {"$set": {"state": "rejected"}, "$unset": {"request": ""}},
+            return_document=ReturnDocument.BEFORE,
+        )
+        if not claimed:
+            raise HTTPException(409, "Approval is missing, used, or expired")
+        item = await self.db.execution_logs.find_one_and_update(
+            {"_id": eid, "user_id": uid},
+            {
+                "$set": {
+                    "approval_status": "rejected",
+                    "status": "rejected",
+                    "policy_decision": "DENY",
+                    "decision_at": utcnow(),
+                    "completed_at": utcnow(),
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        await self.monitor.emit(
+            uid,
+            "tool_rejected",
+            agent_id=item.get("agent_session_id"),
+            execution_id=eid,
+            tool="python_sandbox",
+            decision="DENY",
+            result="rejected",
+        )
+        return self.public(item)
 
     @staticmethod
     def public(item):

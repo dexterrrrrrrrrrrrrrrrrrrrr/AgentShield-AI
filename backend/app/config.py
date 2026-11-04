@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     agent_max_tool_calls: int = Field(default=3, ge=0, le=5)
     agent_user_limit: int = Field(default=10, ge=1, le=100)
 
+    monitor_send_timeout: float = Field(default=3, ge=0.05, le=5)
+    monitor_heartbeat_seconds: float = Field(default=15, ge=1, le=30)
+    monitor_pong_seconds: float = Field(default=35, ge=3, le=90)
+    monitor_poll_seconds: float = Field(default=1, ge=0.05, le=5)
     sandbox_enabled: bool = False
     sandbox_policy: Literal["deny", "approval", "allow"] = "approval"
     sandbox_docker_url: str = "unix:///var/run/docker.sock"
@@ -114,6 +118,17 @@ class Settings(BaseSettings):
     @property
     def csrf_cookie(self) -> str:
         return "__Host-agentshield_csrf" if self.secure_cookies else "agentshield_csrf"
+
+    @model_validator(mode="after")
+    def monitoring_timing(self):
+        if (
+            self.monitor_pong_seconds
+            <= self.monitor_heartbeat_seconds + self.monitor_poll_seconds
+        ):
+            raise ValueError(
+                "Monitor pong timeout must exceed heartbeat plus polling interval"
+            )
+        return self
 
     @model_validator(mode="after")
     def safe_origins(self):

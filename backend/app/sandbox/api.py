@@ -1,7 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from ..security import current_identity, limit_attempts, require_csrf
 from .policy import CodeRequest
@@ -21,7 +21,7 @@ def service(request):
 
 class Approval(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    approve: bool
+    approve: StrictBool
     request_hash: str = Field(pattern="^[a-f0-9]{64}$")
 
 
@@ -96,3 +96,22 @@ async def approve(
     if not payload.approve:
         raise HTTPException(422, "Explicit approval is required")
     return await service(request).approve(uid, eid, payload.request_hash)
+
+
+class Rejection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reject: StrictBool
+    request_hash: str = Field(pattern="^[a-f0-9]{64}$")
+
+
+@router.post("/approvals/{eid}/reject", dependencies=[Depends(require_csrf)])
+async def reject(
+    eid: ID, payload: Rejection, request: Request, identity=Depends(current_identity)
+):
+    uid = identity[0]["_id"]
+    await limit_attempts(
+        request, "sandbox_execute", uid, request.app.state.settings.sandbox_user_limit
+    )
+    if not payload.reject:
+        raise HTTPException(422, "Explicit rejection is required")
+    return await service(request).reject(uid, eid, payload.request_hash)

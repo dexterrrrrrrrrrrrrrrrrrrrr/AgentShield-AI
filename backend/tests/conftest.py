@@ -76,6 +76,7 @@ def client(settings):
             "execution_logs",
             "sandbox_approvals",
             "sandbox_locks",
+            "monitor_streams",
         ):
             client.portal.call(app.state.db[collection].delete_many, {})
 

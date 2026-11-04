@@ -97,9 +97,18 @@ export default function Dashboard() {
             <button
               key={section}
               onClick={() =>
-                section === "Agent Playground" || section === "Sandbox"
+                [
+                  "Agent Playground",
+                  "Sandbox",
+                  "Security Monitoring",
+                  "Execution Logs",
+                ].includes(section)
                   ? router.push(
-                      section === "Sandbox" ? "/sandbox" : "/playground",
+                      section === "Sandbox"
+                        ? "/sandbox"
+                        : section === "Agent Playground"
+                          ? "/playground"
+                          : "/monitoring",
                     )
                   : setActive(section)
               }
@@ -116,7 +125,7 @@ export default function Dashboard() {
         <div className="mt-8 rounded-xl border border-slate-800 p-4 lg:absolute lg:right-5 lg:bottom-6 lg:left-5">
           <p className="text-sm font-medium">Foundation release</p>
           <p className="mt-2 text-xs leading-5 text-slate-400">
-            Phase 4 · Development workspace
+            Phase 5 · Development workspace
           </p>
         </div>
       </aside>
@@ -135,7 +144,7 @@ export default function Dashboard() {
             </Link>
             <LogoutButton />
             <span className="rounded-full border border-teal-800 bg-teal-950/50 px-3 py-1 text-xs text-teal-300">
-              Phase 4
+              Phase 5
             </span>
           </div>
         </header>
@@ -189,11 +198,15 @@ export default function Dashboard() {
                     "Policy-gated",
                     "Readiness required before execution",
                   ],
-                  ["Execution logs", "No activity", "No execution in Phase 4"],
+                  [
+                    "Execution logs",
+                    "Live monitoring",
+                    "Open Execution Logs for your activity",
+                  ],
                   [
                     "Security events",
-                    "Not collecting",
-                    "Monitoring is planned",
+                    "Policy events",
+                    "Open Security Monitoring for stored records",
                   ],
                 ].map(([title, value, note]) => (
                   <section
@@ -219,12 +232,18 @@ export default function Dashboard() {
                       <button
                         key={section}
                         onClick={() =>
-                          section === "Agent Playground" ||
-                          section === "Sandbox"
+                          [
+                            "Agent Playground",
+                            "Sandbox",
+                            "Execution Logs",
+                            "Security Monitoring",
+                          ].includes(section)
                             ? router.push(
                                 section === "Sandbox"
                                   ? "/sandbox"
-                                  : "/playground",
+                                  : section === "Agent Playground"
+                                    ? "/playground"
+                                    : "/monitoring",
                               )
                             : setActive(section)
                         }
@@ -245,12 +264,12 @@ export default function Dashboard() {
                   <p className="mt-4 text-sm leading-7 text-slate-400">
                     Run bounded text agents with permission-checked tools and
                     saved conversations. Sandbox execution requires verified
-                    isolation and policy approval. Security monitoring remains
-                    planned.
+                    isolation and policy approval. Live monitoring shows your
+                    execution activity, policy decisions, and approvals.
                   </p>
                   <div className="mt-6 rounded-lg border border-teal-900 bg-teal-950/30 p-4 text-sm leading-6 text-teal-200">
-                    Agents can use only the approved text tools. Shell commands
-                    and sandbox execution are unavailable.
+                    Agents can use only server-authorized tools. Python
+                    execution requires sandbox readiness and policy checks.
                   </div>
                 </section>
               </div>
@@ -264,7 +283,7 @@ export default function Dashboard() {
                 {active} is coming in a future phase
               </h2>
               <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-slate-400">
-                {descriptions[active]} This section is a placeholder in Phase 4.
+                {descriptions[active]} This section is a placeholder in Phase 5.
               </p>
               <button
                 onClick={() => setActive("Overview")}
@@ -275,7 +294,7 @@ export default function Dashboard() {
             </section>
           )}
           <footer className="mt-10 text-xs text-slate-500">
-            AgentShield AI · Phase 4 foundation
+            AgentShield AI · Phase 5 foundation
           </footer>
         </main>
       </div>

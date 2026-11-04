@@ -1,6 +1,6 @@
 # AgentShield AI
 
-Phase 3 adds a LangGraph agent playground on top of local MongoDB persistence and secure accounts to the existing Next.js dashboard and FastAPI API. All components are free. No hosted database or authentication provider is required.
+Phase 5 adds authenticated real-time monitoring, structured security events, approval management, and stored analytics to the existing Next.js/FastAPI application. MongoDB accounts, LangGraph agents, and the fail-closed Docker sandbox from Phases 1–4 are preserved. All components are free; no hosted database, authentication provider, Redis, or paid monitoring service is required. See [Phase 5 architecture and setup](docs/phase5.md).
 
 ## Requirements
 
@@ -45,12 +45,12 @@ p.write_text(p.read_text().replace("JWT_SECRET=\n", "JWT_SECRET=" + secrets.toke
 p.chmod(0o600)
 PYGEN
 cd backend
-.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-proxy-headers
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-proxy-headers --ws websockets --ws-max-size 1024 --ws-max-queue 8
 ```
 
 Do not overwrite an existing populated `.env`; preserve its signing key and settings. `pydantic-settings` loads `backend/.env` regardless of the command's working directory. Process environment variables override the file. Startup requires a valid signing key, MongoDB ping, and successful index creation; it fails closed otherwise. Ctrl-C closes the async MongoDB client gracefully.
 
-Database defaults to `agentshield_ai`. Authentication uses `users`, `sessions`, and `security_events` (expiring rate counters). Phase 3 also initializes `agent_sessions`, `agent_messages`, and `agent_configs`. Only `execution_logs` remains reserved for a future phase.
+Database defaults to `agentshield_ai`. Authentication uses `users`, `sessions`, and `security_events` (expiring rate counters and structured monitoring events). Agents use `agent_sessions`, `agent_messages`, and `agent_configs`. Sandbox persistence uses `execution_logs`, `sandbox_approvals`, and `sandbox_locks`; live monitoring adds a bounded per-user `monitor_streams` feed. Startup creates the required indexes.
 
 ## 3. Start the frontend
 
@@ -82,7 +82,7 @@ For a production frontend, use `npm run build` followed by `npm start`. Producti
 4. Open Profile to view full name, email, creation date (UTC), and authentication status.
 5. Sign out to revoke that session immediately. Other sessions remain valid. Sessions expire after 15 minutes by default; sign in again. There are no refresh tokens or localStorage tokens.
 
-The original overview, API health/retry behavior, and responsive layout are retained. Agent Playground is now functional at `/playground`; Execution Logs, Security Monitoring, and Settings remain placeholders. The sandbox interface is implemented but execution is disabled until verified. There is no shell, generated-code execution, or Docker sandbox functionality.
+The original overview, API health/retry behavior, profile, and responsive layout remain. Agent Playground is at `/playground`, Sandbox at `/sandbox`, and both Execution Logs and Security Monitoring open `/monitoring`. Settings remains a placeholder. Sandbox execution stays disabled by default and requires the existing verified Docker restrictions and policy. There is no unrestricted shell or host execution.
 
 ## API
 
@@ -126,7 +126,7 @@ Backend tests cover registration, duplicate races, input validation, password ha
 
 ## Security and resource decisions
 
-See [architecture and security](docs/architecture.md). The backend remains the authorization boundary; frontend redirects are an additional UI safeguard. Email syntax is validated, but email ownership verification, password reset, MFA, refresh tokens, and production deployment are outside this phase. No paid services, Redis, Celery, heavy monitoring, or sandbox execution are introduced. Phase 5 requires approval.
+See [architecture and security](docs/architecture.md). The backend remains the authorization boundary; frontend redirects are an additional UI safeguard. Email syntax is validated, but email ownership verification, password reset, MFA, refresh tokens, and production deployment are outside this phase. No paid services, Redis, Celery, or heavy monitoring stack is required. Phase 5 monitoring does not change sandbox restrictions. Phase 6 is outside this implementation.
 
 ## Phase 3: provider configuration
 
@@ -152,9 +152,9 @@ The registry allows only:
 - `summarize_text`: local extractive summary, taking the first three sentences (not an extra LLM call).
 - `format_json`: parse and pretty-print JSON; reject invalid JSON and non-finite constants.
 
-Each tool accepts only a bounded `text` string. Session allowlists can restrict these tools but cannot add tools. Unknown/disallowed names or malformed inputs fail closed. All tool requests/responses are recorded as redacted workflow events. Future sandbox tools must enter through this registry and authorization interface; Phase 3 implements none.
+Each tool accepts only a bounded `text` string. Session allowlists can restrict these tools but cannot add tools. Unknown/disallowed names or malformed inputs fail closed. All tool requests/responses are recorded as redacted workflow events. The Phase 4 `python_sandbox` tool enters through this same allowlist and an independent sandbox policy/approval service; it accepts bounded code instead of a `text` argument. It never runs Python on the host.
 
-Defaults: 4 model iterations, 3 tool calls, 15 seconds per provider operation and 45 seconds total execution, 4000 input characters, 1024 output tokens, and the most recent 6 completed turns (each context message clipped to 2000 characters). Two active executions per backend process are admitted; the database lease prevents concurrent turns/deletion within a running conversation. An expired lease can be recovered after 120 seconds. There are no background workers, Redis, Celery, or event-polling loops.
+Defaults: 4 model iterations, 3 tool calls, 15 seconds per provider operation and 45 seconds total execution, 4000 input characters, 1024 output tokens, and the most recent 6 completed turns (each context message clipped to 2000 characters). Two active executions per backend process are admitted; the database lease prevents concurrent turns/deletion within a running conversation. An expired lease can be recovered after 120 seconds. There are no background workers, Redis, or Celery. Phase 5 reads the bounded MongoDB event feed only while monitoring WebSockets are connected, once per second by default.
 
 ## Agent API and persistence
 
@@ -170,7 +170,7 @@ All `/api/agent` endpoints require the existing JWT/session authentication. Writ
 | GET    | `/api/agent/sessions/{id}/events?offset=0&limit=20`   | Paginated execution statuses and events                     |
 | DELETE | `/api/agent/sessions/{id}`                            | Clear/delete owned conversation (409 while running)         |
 
-Collections: `agent_sessions` holds owner, provider/model, allowlist, UTC timestamps, execution lease/status, and turn count; `agent_messages` holds owned user/assistant turn pairs, status, timestamps, and events; `agent_configs` holds the owner's atomic session quota. Owner/time indexes and a unique owner/session/turn index support bounded queries. `execution_logs` remains deferred. No API keys, system prompts, or raw provider exception bodies are stored in conversation documents.
+Collections: `agent_sessions` holds owner, provider/model, allowlist, UTC timestamps, execution lease/status, and turn count; `agent_messages` holds owned user/assistant turn pairs, status, timestamps, and events; `agent_configs` holds the owner's atomic session quota. Owner/time indexes and a unique owner/session/turn index support bounded queries. Sandbox execution records are stored in `execution_logs`; see [sandbox persistence](docs/sandbox.md). No API keys, system prompts, or raw provider exception bodies are stored in conversation documents.
 
 Agent requests are limited to 10 per user per 300-second rate window by default, using existing MongoDB counters; session creation has its own limit. Auth and agent request bodies are capped at 16 KiB. Known key patterns, configured Groq/JWT keys, and common credential assignments are redacted before persistence and in tool events. Redaction is best effort, not a data-loss-prevention guarantee: do not send confidential data. Groq receives the task, bounded conversation history, and necessary tool results. Tool/model outputs are untrusted plain text and are never rendered as HTML or executed. A malicious model can still produce incorrect or inappropriate text; this is not a complete prompt-injection defense.
 
@@ -180,15 +180,15 @@ Multi-document writes use standalone MongoDB without transactions. A database/pr
 
 Run the backend and frontend commands above. Provider tests use the official Groq SDK with mocked HTTP responses; graph/API tests use injected providers and **real local MongoDB**. The test suite reuses a disposable database's collection files within one run and clears documents between tests, then drops the database at the end to avoid delayed WiredTiger file cleanup exhausting descriptors. Browser tests explicitly launch `scripts.browser_test_app:make_app` in an isolated test database; the normal `app.main:app` entry point never enables a fake provider. Browser tests cover a tool run, persisted/reloaded history, loading indicators, errors/retry, clearing, route protection, mobile layout, and auth regressions.
 
-A real Groq smoke test is separate: after securely configuring a free-tier key and network access, sign in and send one short task with Groq in the playground. A mocked provider test is not evidence of a real Groq request. Ollama availability/model behavior must also be tested separately on a machine where it is installed. Phase 4 remains unimplemented and requires approval.
+A real Groq smoke test is separate: after securely configuring a free-tier key and network access, sign in and send one short task with Groq in the playground. A mocked provider test is not evidence of a real Groq request. Ollama availability/model behavior must also be tested separately on a machine where it is installed. The separate Phase 4 sandbox and Phase 5 monitoring are described below.
 
 ## Phase 4: fail-closed Python sandbox
 
 The `/sandbox` page and `python_sandbox` agent tool use an independent policy service, expiring single-use approvals, MongoDB execution history, and a Docker SDK adapter. Real execution is **disabled by default**. Existing auth, dashboards, and safe text tools require no working sandbox daemon.
 
-Read [sandbox architecture, security, APIs and Colima/M2 validation](docs/sandbox.md) before enabling execution. The current managed daemon lacks effective cgroup controls, so real sandbox tests are **BLOCKED**; no secure Docker-isolation claim is made. M2/Colima has not been validated. No managed daemon configuration is changed by this implementation. Available unit/API/browser tests use explicitly injected Docker mocks with real MongoDB and existing authentication.
+Read [sandbox architecture, security, APIs and Colima/M2 validation](docs/sandbox.md) before enabling execution. The user reports **12/12 real Docker checks passed** on macOS ARM64/Colima at commit `c9a6acd`. This cloud environment cannot revalidate that Mac runtime and its own sandbox runtime lacks effective cgroup controls. Cloud unit/API/browser tests use explicitly injected Docker mocks with real MongoDB and existing authentication; these do not establish real container isolation. No managed daemon configuration is changed.
 
-Start the project using the existing MongoDB, backend and frontend commands above. New settings are in `.env.example`; keep `SANDBOX_ENABLED=false` until the separate readiness and real-integration procedure succeeds. The reviewed runtime digest must be pulled by an operator; HTTP requests never pull or select images. Docker containers are not a complete security boundary against malicious code. Phase 5 requires separate approval.
+Start the project using the existing MongoDB, backend and frontend commands above. New settings are in `.env.example`; keep `SANDBOX_ENABLED=false` until the separate readiness and real-integration procedure succeeds. The reviewed runtime digest must be pulled by an operator; HTTP requests never pull or select images. Docker containers are not a complete security boundary against malicious code. Monitoring never relaxes readiness or execution restrictions.
 
 ### Validate Phase 4 on your own Colima runtime
 
@@ -202,3 +202,14 @@ bash scripts/validate-phase4-colima.sh
 This checks real effective cgroup limits before any container test program, then verifies actual resource enforcement, restrictions, timeouts, output and cleanup. It does not use MongoDB or application credentials, change the daemon, or enable real execution. Return the generated `phase4-validation-*.json` report for review. See [detailed instructions and exit codes](docs/sandbox.md#automated-colima-validation-recommended). Mac validation has not been performed in the cloud.
 
 The Colima validator now handles Docker's correctly cased `CpuCfsQuota` field and uses effective in-container limits rather than optional daemon capability booleans to authorize execution. See [the detection fix](docs/sandbox.md#colima-cgroup-v2-detection-correction). Re-run the same validation command after pulling the fix; no resource restriction should be removed.
+
+
+## Phase 5: live monitoring and analytics
+
+Open **Security Monitoring** or **Execution Logs** after login to reach `/monitoring`. Use a second tab for a Playground task: the live timeline shows model status, tool requests/results, policy decisions, and completion durations. It contains metadata only, never private reasoning, prompts, code, credentials, or tool payloads. The dashboard shows real stored totals, active agents, sandbox outcomes, pending approvals, approval statistics, and decision history. Empty accounts show zeros. Counts reflect current retained records rather than all-time totals.
+
+Review exact pending sandbox requests before approving or rejecting them. Both actions require the existing authenticated owner and CSRF protections and atomically consume an expiring, content-bound request. Replays, foreign decisions, and duplicate actions fail. Approval still requires the unchanged real sandbox readiness/policy checks; safe tools and monitoring work when Docker is unavailable.
+
+WebSockets reuse the same-origin HttpOnly session cookie and enforce exact Origin checks, user-specific feeds, revocation checks, bounded replay, heartbeat/pong, slow-client timeouts, and reconnect cursors. Install the updated backend requirements (including the explicit `websockets` dependency) and use the backend startup command above. No extra services are necessary. Optional `MONITOR_*` settings are in `.env.example`. A reverse proxy must forward WebSocket upgrades and use HTTPS/WSS for production.
+
+See [docs/phase5.md](docs/phase5.md) for the event protocol, APIs, indexes, retention, analytics definitions, security model, local setup, and tests. The normal Pytest and Playwright commands above include Phase 5 tests and Phases 1–4 regressions. Browser tests exercise real WebSockets through a production Next.js build and real local MongoDB with mocked provider/container adapters. Real Docker validation remains a separate local command. No Phase 6 work is included.

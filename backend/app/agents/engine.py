@@ -42,7 +42,9 @@ class Engine:
         self.providers = providers or Providers(settings)
         self.slots = asyncio.Semaphore(2)
 
-    async def run(self, provider, model, history, allowed, sandbox_dispatch=None):
+    async def run(
+        self, provider, model, history, allowed, sandbox_dispatch=None, on_event=None
+    ):
         s = self.s
         secrets = [s.groq_api_key.get_secret_value(), s.jwt_secret.get_secret_value()]
 
@@ -50,6 +52,10 @@ class Engine:
             return redact(
                 str(value).replace(SYSTEM, "[SYSTEM INSTRUCTIONS REDACTED]"), secrets
             )
+
+        async def notify(kind, tool=None, decision=None, result=None):
+            if on_event is not None:
+                await on_event(kind, tool=tool, decision=decision, result=result)
 
         async def model_step(state):
             state["iterations"] += 1
@@ -60,6 +66,7 @@ class Engine:
                 raise ProviderError(
                     "Agent iteration limit reached. Simplify the task.", 422
                 )
+            await notify("agent_status")
             reply = await self.providers.complete(
                 provider, model, state["messages"], allowed
             )
@@ -100,7 +107,18 @@ class Engine:
                         else clean(json.dumps(request.arguments))[:1000],
                     }
                 )
+                await notify("tool_requested", request.name)
                 try:
+                    if request.name != "python_sandbox":
+                        await notify(
+                            "policy_evaluation",
+                            request.name,
+                            "ALLOW"
+                            if request.name in allowed
+                            and request.name
+                            in ("calculator", "format_json", "summarize_text")
+                            else "DENY",
+                        )
                     if request.name == "python_sandbox":
                         if request.name not in allowed or sandbox_dispatch is None:
                             raise ToolRejected("Sandbox dispatch is not authorized")
@@ -109,7 +127,9 @@ class Engine:
                         )
                     else:
                         result = execute(request, allowed)
+                        await notify("tool_completed", request.name, result="completed")
                 except (ToolRejected, ValidationError):
+                    await notify("tool_rejected", request.name, "DENY")
                     state["events"].append(
                         {"kind": "tool_denied", "tool": clean(request.name)}
                     )

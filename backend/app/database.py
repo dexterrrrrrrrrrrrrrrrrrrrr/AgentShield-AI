@@ -5,7 +5,7 @@ from pymongo.errors import PyMongoError
 
 from .config import Settings
 
-# Phase 4 execution logging remains reserved; no sandbox operations exist.
+# All collections through Phase 5 are initialized below.
 FUTURE_COLLECTIONS = ()
 
 
@@ -36,6 +36,9 @@ async def connect_database(settings: Settings):
         await db.agent_sessions.create_index(
             [("user_id", 1), ("created_at", -1), ("_id", -1)]
         )
+        await db.agent_sessions.create_index(
+            [("user_id", 1), ("status", 1), ("lease_until", 1)]
+        )
         await db.agent_messages.create_index(
             [("user_id", 1), ("session_id", 1), ("turn", 1)], unique=True
         )
@@ -44,7 +47,17 @@ async def connect_database(settings: Settings):
             [("user_id", 1), ("created_at", -1), ("_id", -1)]
         )
         await db.execution_logs.create_index("expires_at", expireAfterSeconds=0)
+        await db.execution_logs.create_index(
+            [("user_id", 1), ("approval_status", 1), ("decision_at", -1)]
+        )
         await db.sandbox_approvals.create_index("expires_at", expireAfterSeconds=0)
+        await db.sandbox_approvals.create_index(
+            [("user_id", 1), ("state", 1), ("expires_at", 1)]
+        )
+        await db.monitor_streams.create_index("user_id", unique=True)
+        await db.security_events.create_index(
+            [("user_id", 1), ("kind", 1), ("event.seq", -1)]
+        )
         return client, db
     except PyMongoError:
         if client is not None:

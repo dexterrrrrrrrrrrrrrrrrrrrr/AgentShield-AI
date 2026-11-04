@@ -100,11 +100,7 @@ test("registration, password toggle, login, profile, preserved dashboard, mobile
   expect(await page.evaluate(() => document.cookie)).not.toContain(
     "agentshield_session",
   );
-  for (const section of [
-    "Execution Logs",
-    "Security Monitoring",
-    "Settings",
-  ]) {
+  for (const section of ["Settings"]) {
     await page
       .getByRole("navigation")
       .getByRole("button", { name: section, exact: true })

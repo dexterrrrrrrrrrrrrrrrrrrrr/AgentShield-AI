@@ -1,3 +1,4 @@
+import time
 import uuid
 from datetime import timedelta
 from typing import Annotated, Literal
@@ -200,6 +201,9 @@ async def send(
         raise HTTPException(429, "Agent capacity reached. Retry shortly.")
     request.app.state.agent_active += 1
     locked = None
+    turn = None
+    started = time.monotonic()
+    finished = False
     try:
         locked = await db.agent_sessions.find_one_and_update(
             {
@@ -214,6 +218,7 @@ async def send(
             {
                 "$set": {
                     "status": "running",
+                    "started_at": utcnow(),
                     "lease_until": utcnow() + timedelta(seconds=120),
                 },
                 "$inc": {"turns": 1},
@@ -263,6 +268,19 @@ async def send(
             "created_at": utcnow(),
         }
         await db.agent_messages.insert_one(turn)
+        monitor = request.app.state.monitor
+        await monitor.emit(
+            uid,
+            "agent_started",
+            agent_id=sid,
+            execution_id=turn["_id"],
+            result="running",
+        )
+
+        async def on_event(kind, **metadata):
+            await monitor.emit(
+                uid, kind, agent_id=sid, execution_id=turn["_id"], **metadata
+            )
 
         async def sandbox_dispatch(arguments):
             from ..sandbox.policy import CodeRequest
@@ -270,7 +288,10 @@ async def send(
 
             code = CodeRequest.model_validate({**arguments, "agent_session_id": sid})
             return await SandboxService(
-                db, s, request.app.state.sandbox_manager
+                db,
+                s,
+                request.app.state.sandbox_manager,
+                monitor=request.app.state.monitor,
             ).request(uid, code)
 
         result = await request.app.state.agent_engine.run(
@@ -279,6 +300,7 @@ async def send(
             [*context, {"role": "user", "content": prompt}],
             locked["allowed_tools"],
             sandbox_dispatch=sandbox_dispatch,
+            on_event=on_event,
         )
         await db.agent_messages.update_one(
             {"_id": turn["_id"], "session_id": sid, "user_id": uid},
@@ -287,6 +309,7 @@ async def send(
                     "assistant_content": result["answer"],
                     "events": result["events"],
                     "status": result["status"],
+                    "duration": round(time.monotonic() - started, 3),
                 }
             },
         )
@@ -295,7 +318,36 @@ async def send(
             events=result["events"],
             status=result["status"],
         )
+        await monitor.emit(
+            uid,
+            "agent_completed" if result["status"] == "completed" else "agent_failed",
+            agent_id=sid,
+            execution_id=turn["_id"],
+            result=result["status"],
+            duration=time.monotonic() - started,
+        )
+        finished = True
         return public(turn)
+    except BaseException:
+        if turn is not None and not finished:
+            await db.agent_messages.update_one(
+                {"_id": turn["_id"], "user_id": uid, "session_id": sid},
+                {
+                    "$set": {
+                        "status": "interrupted",
+                        "duration": round(time.monotonic() - started, 3),
+                    }
+                },
+            )
+            await request.app.state.monitor.emit(
+                uid,
+                "agent_failed",
+                agent_id=sid,
+                execution_id=turn["_id"],
+                result="interrupted",
+                duration=time.monotonic() - started,
+            )
+        raise
     finally:
         request.app.state.agent_active -= 1
         if locked:
