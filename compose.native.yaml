@@ -1,0 +1,6 @@
+# Explicit opt-in for a trusted host backend. MongoDB remains loopback-only.
+# Use with compose.yaml and start ONLY mongo; frontend/backend run natively.
+services:
+  mongo:
+    ports:
+      - "127.0.0.1:${MONGODB_PORT:-27017}:27017"

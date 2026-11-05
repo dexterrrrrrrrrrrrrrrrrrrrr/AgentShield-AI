@@ -1,12 +1,102 @@
+name: agentshield-ai-v7
+
 services:
   mongo:
-    image: mongo:8.0
-    ports:
-      - "127.0.0.1:27017:27017"
+    image: mongo:7@sha256:8bb4442761a63a8dda452744082cdac9644b429807eb977b42324a63cef59ca4
+    user: "999:999"
     command: ["mongod", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: agentshield_admin
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set a generated MongoDB root password in an ignored env file}
+      MONGO_INITDB_DATABASE: ${MONGODB_DATABASE:-agentshield_ai}
+      MONGO_APP_USER: ${MONGO_APP_USER:-agentshield_app}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?Set a generated URL-safe MongoDB app password}
+    volumes:
+      # New volume: NEVER attach the previous MongoDB 8 mongo-data volume here.
+      - mongo7-data:/data/db
+      - ./deploy/mongo-init.js:/docker-entrypoint-initdb.d/10-app-user.js:ro
+    networks: [database]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--norc", "--host", "127.0.0.1", "--eval", "const a=db.getSiblingDB(process.env.MONGO_INITDB_DATABASE);if(!a.auth(process.env.MONGO_APP_USER,process.env.MONGO_APP_PASSWORD))quit(1);quit(a.runCommand({ping:1}).ok===1?0:1)"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 10
+    restart: unless-stopped
+    mem_limit: 768m
+    cpus: 1
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 30s
+    logging:
+      options: {max-size: "10m", max-file: "3"}
+
+  backend:
+    image: agentshield-backend:phase7
+    build:
+      context: ./backend
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      JWT_SECRET: ${JWT_SECRET:?Preserve or generate a JWT secret in an ignored env file}
+      AUDIT_SIGNING_KEY: ${AUDIT_SIGNING_KEY:-}
+      MONGODB_URI: mongodb://${MONGO_APP_USER:-agentshield_app}:${MONGO_APP_PASSWORD:?Set MongoDB app password}@mongo:27017/${MONGODB_DATABASE:-agentshield_ai}?authSource=${MONGODB_DATABASE:-agentshield_ai}
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-agentshield_ai}
+      MONGODB_MAX_POOL_SIZE: 10
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      TRUSTED_HOSTS: backend,localhost,127.0.0.1
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-8b-instant}
+      OLLAMA_ENABLED: "false"
+      # No Docker socket, remote daemon, or sandbox credentials enter this service.
+      SANDBOX_ENABLED: "false"
+    depends_on:
+      mongo: {condition: service_healthy}
+    networks: [application, database, egress]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16777216
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
     mem_limit: 512m
     cpus: 1
-    volumes:
-      - mongo-data:/data/db
+    pids_limit: 128
+    stop_grace_period: 40s
+    logging:
+      options: {max-size: "10m", max-file: "3"}
+
+  frontend:
+    image: agentshield-frontend:phase7
+    build:
+      context: ./frontend
+      args:
+        API_INTERNAL_URL: http://backend:8000
+    environment:
+      API_INTERNAL_URL: http://backend:8000
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend: {condition: service_healthy}
+    networks: [edge, application]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16777216
+      - /app/.next/cache:rw,noexec,nosuid,nodev,size=16777216,uid=10001,gid=10001
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1
+    pids_limit: 128
+    stop_grace_period: 30s
+    logging:
+      options: {max-size: "10m", max-file: "3"}
+
+networks:
+  edge: {}
+  application: {internal: true}
+  database: {internal: true}
+  egress: {}
 volumes:
-  mongo-data:
+  mongo7-data:

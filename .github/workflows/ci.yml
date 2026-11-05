@@ -76,7 +76,7 @@ jobs:
       - name: Verify MongoDB from the test process
         run: python -c "from pymongo import MongoClient; import os; c = MongoClient(os.environ['TEST_MONGODB_URI'], serverSelectionTimeoutMS=5000); assert c.admin.command('ping')['ok'] == 1; c.close()"
       - run: python -m pip check
-      - run: python -m pytest -q
+      - run: PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q --tb=short
       - run: python -m pip install pip-audit==2.10.1
       - run: python -m pip_audit -r requirements-dev.txt
       - name: MongoDB failure diagnostics
@@ -87,3 +87,29 @@ jobs:
         if: always()
         working-directory: ${{ github.workspace }}
         run: bash .github/scripts/mongodb.sh stop
+  deployment:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate isolated deployment credentials
+        run: python scripts/init-compose-env.py
+      - name: Validate Compose configuration
+        run: docker compose -p agentshield-ci-deployment --env-file .env.compose config --quiet
+      - name: Build non-root application images
+        run: docker compose -p agentshield-ci-deployment --env-file .env.compose build
+      - name: Start isolated local deployment
+        run: docker compose -p agentshield-ci-deployment --env-file .env.compose up -d --wait --wait-timeout 180
+      - name: Verify real application integration without inference
+        run: python scripts/smoke-compose.py --base-url http://localhost:3000
+      - name: Safe deployment failure diagnostics
+        if: failure()
+        run: docker compose -p agentshield-ci-deployment --env-file .env.compose logs --no-color --tail 100
+      - name: Remove disposable deployment data and credentials
+        if: always()
+        run: |
+          docker compose -p agentshield-ci-deployment --env-file .env.compose down --volumes
+          rm -f .env.compose
