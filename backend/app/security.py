@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import hmac
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import jwt
@@ -14,6 +15,7 @@ from pymongo import ReturnDocument
 from starlette.concurrency import run_in_threadpool
 
 from .config import Settings
+from .guards import allowed_origin
 
 
 def utcnow() -> datetime:
@@ -25,14 +27,22 @@ class Passwords:
         # OWASP Argon2id minimum: 19 MiB, 2 iterations, parallelism 1.
         self.hasher = PasswordHasher(time_cost=2, memory_cost=19456, parallelism=1)
         self.slots = asyncio.Semaphore(2)
+        self.pending = asyncio.Semaphore(8)
         self.dummy = self.hasher.hash(secrets.token_urlsafe(32))
 
+    @asynccontextmanager
+    async def admission(self):
+        if self.pending.locked():
+            raise HTTPException(429, "Authentication capacity reached. Retry shortly.")
+        async with self.pending, self.slots:
+            yield
+
     async def hash(self, password: str) -> str:
-        async with self.slots:
+        async with self.admission():
             return await run_in_threadpool(self.hasher.hash, password)
 
     async def verify(self, hashed: str, password: str) -> bool:
-        async with self.slots:
+        async with self.admission():
             try:
                 return await run_in_threadpool(self.hasher.verify, hashed, password)
             except (VerificationError, InvalidHashError):
@@ -60,6 +70,8 @@ def encode_token(
 
 
 def decode_token(settings: Settings, token: str, use: str) -> dict:
+    if not isinstance(token, str) or len(token) > 2048:
+        raise jwt.InvalidTokenError("Invalid token")
     claims = jwt.decode(
         token,
         settings.jwt_secret.get_secret_value(),
@@ -129,7 +141,7 @@ def session_id_from_cookie(request: Request) -> str:
 
 def require_csrf(request: Request) -> None:
     settings = request.app.state.settings
-    if request.headers.get("origin") not in settings.origins:
+    if not allowed_origin(request):
         raise HTTPException(status_code=403, detail="Request origin is not allowed")
     cookie = request.cookies.get(settings.csrf_cookie, "")
     header = request.headers.get("x-csrf-token", "")

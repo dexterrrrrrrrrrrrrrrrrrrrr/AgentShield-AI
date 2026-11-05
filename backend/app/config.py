@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     mongodb_timeout_ms: int = Field(default=3000, ge=100, le=10000)
     mongodb_max_pool_size: int = Field(default=10, ge=1, le=25)
     jwt_secret: SecretStr
+    audit_signing_key: SecretStr = SecretStr("")
     jwt_issuer: str = Field(default="agentshield-api", min_length=1)
     jwt_audience: str = Field(default="agentshield-web", min_length=1)
     access_token_minutes: int = Field(default=15, ge=1, le=30)
@@ -78,8 +79,16 @@ class Settings(BaseSettings):
             or p.path not in ("", "/")
             or p.query
             or p.fragment
+            or p.port == 0
         ):
             raise ValueError("Ollama URL must be an HTTP loopback origin")
+        return value
+
+    @field_validator("audit_signing_key")
+    @classmethod
+    def audit_key(cls, value):
+        if value.get_secret_value():
+            return cls.strong_signing_key(value)
         return value
 
     @field_validator("jwt_secret")

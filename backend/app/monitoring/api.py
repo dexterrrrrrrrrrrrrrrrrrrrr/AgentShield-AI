@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+import uuid
 
 import anyio
 from fastapi import (
@@ -15,7 +16,9 @@ from fastapi import (
 from fastapi.encoders import jsonable_encoder
 from pymongo.errors import PyMongoError
 
+from ..guards import allowed_origin
 from ..security import current_identity, limit_attempts, utcnow
+from .connections import ConnectionLeases
 
 router = APIRouter(prefix="/api/monitor", tags=["Monitoring"])
 
@@ -103,7 +106,16 @@ async def events(
         .limit(limit)
         .to_list(length=limit)
     )
-    return {"events": [v["event"] for v in rows]}
+    stream = await request.app.state.db.monitor_streams.find_one(
+        {"_id": uid, "user_id": uid}
+    )
+    cutoff = stream.get("signed_from") if stream else None
+    return {
+        "events": [
+            request.app.state.monitor.public_event(v["event"], uid, cutoff)
+            for v in rows
+        ]
+    }
 
 
 @router.get("/approvals")
@@ -162,14 +174,24 @@ async def approvals(
 async def websocket(ws: WebSocket):
     s = ws.app.state.settings
     monitor = ws.app.state.monitor
-    if ws.headers.get("origin") not in s.origins:
+    if not allowed_origin(ws):
         await ws.close(code=4403)
         return
     try:
         identity = await current_identity(ws)
         uid = identity[0]["_id"]
         raw = ws.query_params.get("after", "0")
-        if not raw.isdigit() or len(raw) > 16 or int(raw) > 9007199254740991:
+        if (
+            set(ws.query_params) - {"after"}
+            or (
+                hasattr(ws.query_params, "getlist")
+                and len(ws.query_params.getlist("after")) > 1
+            )
+            or not raw.isascii()
+            or not raw.isdigit()
+            or len(raw) > 16
+            or int(raw) > 9007199254740991
+        ):
             raise ValueError()
         after = int(raw)
         await limit_attempts(ws, "monitor_connect", uid, 60)
@@ -185,6 +207,15 @@ async def websocket(ws: WebSocket):
     if sum(monitor.connections.values()) >= 20 or monitor.connections.get(uid, 0) >= 4:
         await ws.close(code=1013)
         return
+    leases = ConnectionLeases(ws.app.state.db)
+    cid = uuid.uuid4().hex
+    try:
+        if not await leases.acquire(uid, cid):
+            await ws.close(code=1013)
+            return
+    except PyMongoError:
+        await ws.close(code=1013)
+        return
     monitor.connections[uid] = monitor.connections.get(uid, 0) + 1
     last_pong = [time.monotonic()]
 
@@ -196,7 +227,11 @@ async def websocket(ws: WebSocket):
     async def receive():
         previous = 0.0
         while True:
-            text = await ws.receive_text()
+            try:
+                text = await ws.receive_text()
+            except KeyError:
+                await ws.close(code=1008)
+                return
             try:
                 valid = len(text) <= 256 and json.loads(text) == {"type": "pong"}
             except (ValueError, TypeError):
@@ -214,7 +249,10 @@ async def websocket(ws: WebSocket):
         await send({"type": "connected", "protocol": 1})
         while True:
             try:
-                await current_identity(ws)  # Recheck expiry/revocation before delivery.
+                await current_identity(ws)
+                if not await leases.renew(uid, cid):
+                    await ws.close(code=1013)
+                    return
             except HTTPException:
                 await ws.close(code=4401)
                 return
@@ -228,6 +266,15 @@ async def websocket(ws: WebSocket):
                 batch, _ = await monitor.replay(uid, 0)
                 after = 0
             for event in batch:
+                # Revocation or lease loss must stop a slow replay mid-batch.
+                try:
+                    await current_identity(ws)
+                except HTTPException:
+                    await ws.close(code=4401)
+                    return
+                if not await leases.renew(uid, cid):
+                    await ws.close(code=1013)
+                    return
                 await send({"type": "event", "event": event})
                 after = event["seq"]
             if time.monotonic() - heartbeat >= s.monitor_heartbeat_seconds:
@@ -253,6 +300,10 @@ async def websocket(ws: WebSocket):
         with anyio.move_on_after(s.monitor_send_timeout, shield=True):
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+            try:
+                await leases.release(uid, cid)
+            except PyMongoError:
+                pass  # Lease expires, never increase capacity on an uncertain write.
             try:
                 await ws.close(code=1013)
             except (RuntimeError, WebSocketDisconnect):

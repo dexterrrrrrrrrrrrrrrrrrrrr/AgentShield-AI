@@ -1,27 +1,42 @@
 import asyncio
-import re
 import uuid
 from datetime import timedelta
 
 from fastapi import HTTPException
 from pymongo import ReturnDocument
 
-from ..agents.engine import redact
+from ..guards import CREDENTIAL, credential_values
+from ..guards import redact as redact_credentials
 from ..security import utcnow
 from .manager import Unavailable
 from .policy import CodeRequest, Decision, evaluate, fingerprint, limits
 
 
 class SandboxService:
-    def __init__(self, db, settings, manager, monitor=None):
+    def __init__(self, db, settings, manager, monitor=None, authorize=None):
         self.db = db
         self.s = settings
         self.manager = manager
         if monitor is None:
             from ..monitoring.events import Monitor
 
-            monitor = Monitor(db)
+            monitor = Monitor(db, settings)
         self.monitor = monitor
+        self.authorize = authorize
+
+    def validate_code(self, code):
+        if any(v in code for v in credential_values(self.s)) or CREDENTIAL.search(code):
+            raise HTTPException(422, "Remove credentials from submitted code")
+
+    def approval_payload(self, pending):
+        try:
+            payload = CodeRequest.model_validate(pending["request"])
+        except (ValueError, TypeError, KeyError):
+            raise HTTPException(
+                409, "Approval is invalid; submit a new request"
+            ) from None
+        self.validate_code(payload.code)
+        return payload
 
     async def owned(self, uid, payload):
         return not payload.agent_session_id or bool(
@@ -51,14 +66,7 @@ class SandboxService:
             raise HTTPException(404, "Agent session not found")
         s = self.s
         # Known credentials must not enter stored approval requests or Docker Cmd.
-        if any(
-            v and v in payload.code
-            for v in (
-                s.jwt_secret.get_secret_value(),
-                s.groq_api_key.get_secret_value(),
-            )
-        ) or re.search(r"gsk_[A-Za-z0-9_-]{20,}", payload.code):
-            raise HTTPException(422, "Remove credentials from submitted code")
+        self.validate_code(payload.code)
         blocked = await self.db.sandbox_locks.find_one(
             {"_id": "execution", "blocked": True}
         )
@@ -157,7 +165,7 @@ class SandboxService:
             )
         elif decision == Decision.ALLOW:
             item = await self.run(uid, eid, payload)
-        return self.public(item)
+        return self.public(item, self.s)
 
     async def approve(self, uid, eid, digest):
         await self.quota(uid)
@@ -171,7 +179,7 @@ class SandboxService:
         )
         if not pending:
             raise HTTPException(409, "Approval is missing, used, or expired")
-        payload = CodeRequest.model_validate(pending["request"])
+        payload = self.approval_payload(pending)
         if digest != pending["request_hash"] or fingerprint(payload, self.s) != digest:
             raise HTTPException(
                 409, "The request or policy changed; submit a new request"
@@ -196,6 +204,12 @@ class SandboxService:
         )
         if not used:
             raise HTTPException(409, "Approval was already used")
+        # Validate the exact document atomically consumed, not an earlier read.
+        payload = self.approval_payload(used)
+        if fingerprint(payload, self.s) != digest or not await self.owned(uid, payload):
+            raise HTTPException(
+                409, "The request or policy changed; submit a new request"
+            )
         await self.db.execution_logs.update_one(
             {"_id": eid, "user_id": uid},
             {"$set": {"approval_status": "approved", "decision_at": utcnow()}},
@@ -209,9 +223,10 @@ class SandboxService:
             decision="ALLOW",
             result="queued",
         )
-        return self.public(await self.run(uid, eid, payload))
+        return self.public(await self.run(uid, eid, payload), self.s)
 
     async def run(self, uid, eid, payload):
+        authorization_failure = None
         # Distributed admission: one live sandbox across backend workers.
         await self.db.sandbox_locks.update_one(
             {"_id": "execution"}, {"$setOnInsert": {"until": utcnow()}}, upsert=True
@@ -238,7 +253,22 @@ class SandboxService:
                     decision="ALLOW",
                     result="running",
                 )
+                if self.authorize is not None:
+                    await self.authorize()
+                self.validate_code(payload.code)
+                if (
+                    not await self.owned(uid, payload)
+                    or not self.s.sandbox_enabled
+                    or self.s.sandbox_policy == "deny"
+                ):
+                    raise HTTPException(403, "Sandbox authorization failed")
                 result = await self.manager.execute(payload.code)
+            except HTTPException as exc:
+                authorization_failure = exc
+                result = {
+                    "status": "rejected",
+                    "error_category": "AUTHORIZATION_FAILED",
+                }
             except asyncio.CancelledError:
                 await self.db.execution_logs.update_one(
                     {"_id": eid, "user_id": uid},
@@ -279,13 +309,7 @@ class SandboxService:
                 )
         for key in ("stdout", "stderr"):
             if key in result:
-                result[key] = redact(
-                    result[key],
-                    [
-                        self.s.jwt_secret.get_secret_value(),
-                        self.s.groq_api_key.get_secret_value(),
-                    ],
-                )
+                result[key] = redact_credentials(result[key], credential_values(self.s))
         result["completed_at"] = utcnow()
         item = await self.db.execution_logs.find_one_and_update(
             {"_id": eid, "user_id": uid},
@@ -302,6 +326,8 @@ class SandboxService:
             result=item["status"],
             duration=item.get("duration"),
         )
+        if authorization_failure is not None:
+            raise authorization_failure
         return item
 
     async def reject(self, uid, eid, digest):
@@ -341,11 +367,11 @@ class SandboxService:
             decision="DENY",
             result="rejected",
         )
-        return self.public(item)
+        return self.public(item, self.s)
 
     @staticmethod
-    def public(item):
-        return {
+    def public(item, settings=None):
+        result = {
             "id": item["_id"],
             **{
                 k: v
@@ -353,3 +379,10 @@ class SandboxService:
                 if k not in ("_id", "user_id", "expires_at")
             },
         }
+        if settings:
+            for key in ("stdout", "stderr"):
+                if key in result:
+                    result[key] = redact_credentials(
+                        result[key], credential_values(settings)
+                    )
+        return result

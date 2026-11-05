@@ -12,10 +12,15 @@ ID = Annotated[str, Path(pattern="^[a-f0-9]{32}$")]
 
 
 def service(request):
+    async def authorize():
+        await current_identity(request)
+
     return SandboxService(
         request.app.state.db,
         request.app.state.settings,
         request.app.state.sandbox_manager,
+        monitor=request.app.state.monitor,
+        authorize=authorize,
     )
 
 
@@ -64,7 +69,11 @@ async def executions(
         .limit(limit)
         .to_list(length=limit)
     )
-    return {"executions": [SandboxService.public(v) for v in items]}
+    return {
+        "executions": [
+            SandboxService.public(v, request.app.state.settings) for v in items
+        ]
+    }
 
 
 @router.get("/executions/{eid}")
@@ -76,12 +85,14 @@ async def execution(eid: ID, request: Request, identity=Depends(current_identity
     )
     if not item:
         raise HTTPException(404, "Execution not found")
-    result = SandboxService.public(item)
+    result = SandboxService.public(item, request.app.state.settings)
     pending = await request.app.state.db.sandbox_approvals.find_one(
         {"_id": eid, "user_id": uid, "state": "pending"}
     )
     if pending:
-        result["approval_request"] = pending["request"]
+        result["approval_request"] = (
+            service(request).approval_payload(pending).model_dump()
+        )
     return result
 
 

@@ -1,5 +1,7 @@
 # Phase 5: monitoring, approvals, and analytics
 
+Phase 6 preserves this protocol and adds shared connection leases, signed event verification, and additional authorization checks. See [phase6.md](phase6.md) for the current security controls and legacy audit handling; its shared connection limits supersede the per-process-only admission described below.
+
 Phase 5 adds a user-scoped live monitor at `/monitoring`. Execution Logs and Security Monitoring in the dashboard both open it. It displays active conversations, execution counts, tool activity, security decisions, pending approvals, approval history, and completion durations. Counts come from MongoDB; an empty account shows zeros. Phase 6 is outside this implementation.
 
 ## Architecture

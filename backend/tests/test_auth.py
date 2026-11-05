@@ -351,6 +351,7 @@ def test_indexes_and_future_collections(client):
         "execution_logs",
         "sandbox_approvals",
         "monitor_streams",
+        "monitor_connections",
     }
 
 

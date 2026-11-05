@@ -1,7 +1,12 @@
+import asyncio
+import hashlib
+import hmac
+import json
+import math
 import uuid
 from datetime import timedelta
 
-from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from ..security import utcnow
 
@@ -37,9 +42,18 @@ RESULTS = {
 }
 
 
+class AuditIntegrityError(RuntimeError):
+    pass
+
+
 class Monitor:
-    def __init__(self, db):
+    def __init__(self, db, settings):
         self.db = db
+        key = (
+            settings.audit_signing_key.get_secret_value()
+            or settings.jwt_secret.get_secret_value()
+        )
+        self.key = hmac.digest(key.encode(), b"AgentShield/audit/v1", "sha256")
         self.connections = {}  # Admission only; event delivery uses MongoDB.
 
     async def emit(
@@ -65,6 +79,10 @@ class Monitor:
             ):
                 raise ValueError("Invalid event identifier")
         now = utcnow()
+        # BSON dates have millisecond precision; sign exactly what MongoDB stores.
+        now = now.replace(microsecond=now.microsecond // 1000 * 1000)
+        if duration is not None and not math.isfinite(float(duration)):
+            raise ValueError("Invalid duration")
         event = {
             "id": uuid.uuid4().hex,
             "user_id": uid,
@@ -93,41 +111,51 @@ class Monitor:
             if duration is not None
             else None,
         }
-        # One atomic append allocates sequence and persists a bounded replay feed.
-        # No allocate-then-insert race can make a client skip a later commit.
-        stream = await self.db.monitor_streams.find_one_and_update(
-            {"_id": uid, "user_id": uid},
-            [
-                {"$set": {"seq": {"$add": [{"$ifNull": ["$seq", 0]}, 1]}}},
+        # CAS binds the signed sequence to the atomic bounded append. No transaction
+        # or replica-set requirement; concurrent writers retry without skipping IDs.
+        for _ in range(32):
+            stream = await self.db.monitor_streams.find_one(
+                {"_id": uid, "user_id": uid}
+            )
+            if stream is None:
+                try:
+                    await self.db.monitor_streams.insert_one(
+                        {
+                            "_id": uid,
+                            "user_id": uid,
+                            "seq": 0,
+                            "events": [],
+                            "signed_from": 1,
+                        }
+                    )
+                except DuplicateKeyError:
+                    pass
+                continue
+            seq = stream["seq"]
+            if stream["events"]:
+                if stream["events"][-1]["seq"] != seq:
+                    raise AuditIntegrityError()
+                for prior in stream["events"]:
+                    self.public_event(prior, uid, stream.get("signed_from"))
+            event["seq"] = seq + 1
+            event["signature"] = self.seal(event)
+            claimed = await self.db.monitor_streams.update_one(
+                {"_id": uid, "user_id": uid, "seq": seq},
                 {
                     "$set": {
-                        "user_id": uid,
-                        "events": {
-                            "$slice": [
-                                {
-                                    "$concatArrays": [
-                                        {"$ifNull": ["$events", []]},
-                                        [
-                                            {
-                                                "$mergeObjects": [
-                                                    {"$literal": event},
-                                                    {"seq": "$seq"},
-                                                ]
-                                            }
-                                        ],
-                                    ]
-                                },
-                                -200,
-                            ]
-                        },
+                        "seq": seq + 1,
                         "updated_at": now,
-                    }
+                        "signed_from": stream.get("signed_from", seq + 1),
+                    },
+                    "$push": {"events": {"$each": [event], "$slice": -200}},
                 },
-            ],
-            upsert=True,
-            return_document=ReturnDocument.AFTER,
-        )
-        published = stream["events"][-1]
+            )
+            if claimed.modified_count:
+                break
+            await asyncio.sleep(0)
+        else:
+            raise AuditIntegrityError()
+        published = dict(event)
         await self.db.security_events.insert_one(
             {
                 "_id": event["id"],
@@ -137,7 +165,55 @@ class Monitor:
                 "expires_at": now + timedelta(days=7),
             }
         )
-        return published
+        return self.public_event(published, uid, event["seq"])
+
+    def seal(self, event):
+        value = {k: v for k, v in event.items() if k != "signature"}
+        encoded = json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+            default=lambda v: v.isoformat(timespec="milliseconds"),
+        ).encode()
+        return hmac.new(self.key, encoded, hashlib.sha256).hexdigest()
+
+    def public_event(self, event, uid, signed_from=None):
+        try:
+            return self._public_event(event, uid, signed_from)
+        except (TypeError, ValueError, AttributeError, KeyError):
+            raise AuditIntegrityError() from None
+
+    def _public_event(self, event, uid, signed_from):
+        # Legacy Phase 5 metadata is readable but explicitly cannot be authenticated.
+        if event.get("user_id") != uid or event.get("kind") not in KINDS:
+            raise AuditIntegrityError()
+        signed = event.get("signature")
+        if signed or (signed_from is not None and event.get("seq", 0) >= signed_from):
+            if not isinstance(signed, str) or not hmac.compare_digest(
+                signed, self.seal(event)
+            ):
+                raise AuditIntegrityError()
+        allowed = {
+            "id",
+            "user_id",
+            "agent_id",
+            "execution_id",
+            "timestamp",
+            "kind",
+            "category",
+            "severity",
+            "action",
+            "tool",
+            "policy_decision",
+            "execution_result",
+            "duration",
+            "seq",
+        }
+        return {
+            **{k: v for k, v in event.items() if k in allowed},
+            "integrity": "verified" if signed else "legacy_unverified",
+        }
 
     async def replay(self, uid, after):
         stream = await self.db.monitor_streams.find_one({"_id": uid, "user_id": uid})
@@ -147,4 +223,14 @@ class Monitor:
         gap = bool(
             events and after and (after < events[0]["seq"] - 1 or after > stream["seq"])
         )
-        return [v for v in events if v["seq"] > after][:50], gap
+        if events and (
+            events[-1]["seq"] != stream["seq"]
+            or any(b["seq"] != a["seq"] + 1 for a, b in zip(events, events[1:]))
+        ):
+            raise AuditIntegrityError()
+        batch = [
+            self.public_event(v, uid, stream.get("signed_from"))
+            for v in events
+            if v["seq"] > after
+        ][:50]
+        return batch, gap

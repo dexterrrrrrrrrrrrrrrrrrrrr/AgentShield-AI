@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pymongo import ReturnDocument
 
+from ..guards import credential_values, redact_data
 from ..security import current_identity, limit_attempts, require_csrf, utcnow
 from .engine import redact
 from .tools import NAMES
@@ -55,15 +56,17 @@ async def get_owned(request, sid, uid):
     return item
 
 
-def public(item):
-    return {
+def public(item, settings=None):
+    result = {
         "id": item["_id"],
         **{k: v for k, v in item.items() if k not in ("_id", "user_id", "lease_until")},
     }
+    return redact_data(result, credential_values(settings)) if settings else result
 
 
 @router.get("/providers")
 async def providers(request: Request, identity=Depends(current_identity)):
+    await limit_attempts(request, "agent_read", owner(identity), 120)
     s = request.app.state.settings
     return {
         "providers": [
@@ -124,7 +127,7 @@ async def create(
             {"_id": uid, "user_id": uid}, {"$inc": {"session_count": -1}}
         )
         raise
-    return public(item)
+    return public(item, s)
 
 
 @router.get("/sessions")
@@ -134,13 +137,19 @@ async def sessions(
     limit: int = Query(20, ge=1, le=50),
     identity=Depends(current_identity),
 ):
+    await limit_attempts(request, "agent_read", owner(identity), 120)
     cursor = (
         request.app.state.db.agent_sessions.find({"user_id": owner(identity)})
         .sort([("created_at", -1), ("_id", -1)])
         .skip(offset)
         .limit(limit)
     )
-    return {"sessions": [public(v) for v in await cursor.to_list(length=limit)]}
+    return {
+        "sessions": [
+            public(v, request.app.state.settings)
+            for v in await cursor.to_list(length=limit)
+        ]
+    }
 
 
 @router.get("/sessions/{sid}/messages")
@@ -152,6 +161,7 @@ async def history(
     identity=Depends(current_identity),
 ):
     uid = owner(identity)
+    await limit_attempts(request, "agent_read", uid, 120)
     session = await get_owned(request, sid, uid)
     docs = (
         await request.app.state.db.agent_messages.find(
@@ -162,7 +172,10 @@ async def history(
         .limit(limit)
         .to_list(length=limit)
     )
-    return {"session": public(session), "messages": [public(v) for v in docs]}
+    return {
+        "session": public(session, request.app.state.settings),
+        "messages": [public(v, request.app.state.settings) for v in docs],
+    }
 
 
 @router.get("/sessions/{sid}/events")
@@ -247,10 +260,7 @@ async def send(
             )
 
         def clean(text):
-            return redact(
-                text,
-                [s.groq_api_key.get_secret_value(), s.jwt_secret.get_secret_value()],
-            )
+            return redact(text, credential_values(s))
 
         prompt = clean(payload.content)
         # Persist the user turn before external I/O. No partial tool effects exist.
@@ -282,6 +292,12 @@ async def send(
                 uid, kind, agent_id=sid, execution_id=turn["_id"], **metadata
             )
 
+        async def authorize_tool(name):
+            live_identity = await current_identity(request)
+            current = await get_owned(request, sid, owner(live_identity))
+            if owner(live_identity) != uid or name not in current["allowed_tools"]:
+                raise HTTPException(403, "Tool authorization failed")
+
         async def sandbox_dispatch(arguments):
             from ..sandbox.policy import CodeRequest
             from ..sandbox.service import SandboxService
@@ -292,6 +308,7 @@ async def send(
                 s,
                 request.app.state.sandbox_manager,
                 monitor=request.app.state.monitor,
+                authorize=lambda: authorize_tool("python_sandbox"),
             ).request(uid, code)
 
         result = await request.app.state.agent_engine.run(
@@ -301,6 +318,7 @@ async def send(
             locked["allowed_tools"],
             sandbox_dispatch=sandbox_dispatch,
             on_event=on_event,
+            authorize_tool=authorize_tool,
         )
         await db.agent_messages.update_one(
             {"_id": turn["_id"], "session_id": sid, "user_id": uid},
@@ -327,7 +345,7 @@ async def send(
             duration=time.monotonic() - started,
         )
         finished = True
-        return public(turn)
+        return public(turn, s)
     except BaseException:
         if turn is not None and not finished:
             await db.agent_messages.update_one(

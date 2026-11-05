@@ -39,6 +39,12 @@ test("unauthenticated dashboard and profile redirect; API rejects missing auth a
     ).toBeVisible();
   }
   expect((await page.request.get("/api/auth/me")).status()).toBe(401);
+  const headers = (await page.request.get("/login")).headers();
+  expect(headers["content-security-policy"]).toContain("object-src 'none'");
+  expect(headers["content-security-policy"]).toContain(
+    "frame-ancestors 'none'",
+  );
+  expect(headers["permissions-policy"]).toContain("camera=()");
   const status = await page.evaluate(
     async () =>
       (

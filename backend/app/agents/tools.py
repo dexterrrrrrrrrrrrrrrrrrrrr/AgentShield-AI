@@ -6,7 +6,9 @@ import math
 import operator
 import re
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from ..guards import strict_json
 
 NAMES = ("calculator", "summarize_text", "format_json", "python_sandbox")
 
@@ -17,9 +19,37 @@ class TextInput(BaseModel):
 
 
 class ToolRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
     name: str = Field(min_length=1, max_length=64)
     arguments: dict
+
+    @field_validator("arguments")
+    @classmethod
+    def bounded_arguments(cls, value):
+        encoded = json.dumps(value, allow_nan=False, ensure_ascii=False)
+        if len(encoded.encode()) > 40000:
+            raise ValueError("Tool arguments exceed size limit")
+        strict_json(encoded)
+        return value
+
+
+class PythonInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    code: str = Field(min_length=1, max_length=32768)
+
+    @field_validator("code")
+    @classmethod
+    def valid_code(cls, value):
+        if len(value.encode()) > 32768 or not value.strip() or "\0" in value:
+            raise ValueError("Invalid code")
+        return value
+
+
+def validate_request(request, allowed):
+    if request.name not in NAMES or request.name not in allowed:
+        raise ToolRejected("Tool is unknown or not permitted")
+    model = PythonInput if request.name == "python_sandbox" else TextInput
+    return model.model_validate(request.arguments)
 
 
 class ToolRejected(ValueError):
@@ -68,10 +98,7 @@ def execute(request: ToolRequest, allowed: list[str]) -> str:
             return calculate(data.text)
         if request.name == "format_json":
             formatted = json.dumps(
-                json.loads(
-                    data.text,
-                    parse_constant=lambda _: (_ for _ in ()).throw(ValueError()),
-                ),
+                strict_json(data.text),
                 indent=2,
                 ensure_ascii=True,
                 allow_nan=False,

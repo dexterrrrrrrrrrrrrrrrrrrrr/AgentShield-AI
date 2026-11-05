@@ -55,6 +55,9 @@ async def connect_database(settings: Settings):
             [("user_id", 1), ("state", 1), ("expires_at", 1)]
         )
         await db.monitor_streams.create_index("user_id", unique=True)
+        await db.monitor_connections.update_one(
+            {"_id": "pool"}, {"$setOnInsert": {"slots": []}}, upsert=True
+        )
         await db.security_events.create_index(
             [("user_id", 1), ("kind", 1), ("event.seq", -1)]
         )

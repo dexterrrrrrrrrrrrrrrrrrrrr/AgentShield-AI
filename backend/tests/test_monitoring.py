@@ -263,7 +263,7 @@ def test_approval_and_rejection_race_has_one_winner(client):
     async def race():
         from types import SimpleNamespace
 
-        svc = service(SimpleNamespace(app=client.app))
+        svc = service(SimpleNamespace(app=client.app, cookies=dict(client.cookies)))
         return await asyncio.gather(
             svc.approve(uid, item["id"], item["request_hash"]),
             svc.reject(uid, item["id"], item["request_hash"]),

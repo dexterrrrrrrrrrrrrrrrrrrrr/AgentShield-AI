@@ -1,6 +1,6 @@
 # AgentShield AI
 
-Phase 5 adds authenticated real-time monitoring, structured security events, approval management, and stored analytics to the existing Next.js/FastAPI application. MongoDB accounts, LangGraph agents, and the fail-closed Docker sandbox from Phases 1–4 are preserved. All components are free; no hosted database, authentication provider, Redis, or paid monitoring service is required. See [Phase 5 architecture and setup](docs/phase5.md).
+Phase 6 adds security hardening to the existing application; see [the audit, threat model, protections and local validation](docs/phase6.md). Phase 5 provides authenticated real-time monitoring, structured security events, approval management, and stored analytics to the existing Next.js/FastAPI application. MongoDB accounts, LangGraph agents, and the fail-closed Docker sandbox from Phases 1–4 are preserved. All components are free; no hosted database, authentication provider, Redis, or paid monitoring service is required. See [Phase 5 architecture and setup](docs/phase5.md).
 
 ## Requirements
 
@@ -213,3 +213,10 @@ Review exact pending sandbox requests before approving or rejecting them. Both a
 WebSockets reuse the same-origin HttpOnly session cookie and enforce exact Origin checks, user-specific feeds, revocation checks, bounded replay, heartbeat/pong, slow-client timeouts, and reconnect cursors. Install the updated backend requirements (including the explicit `websockets` dependency) and use the backend startup command above. No extra services are necessary. Optional `MONITOR_*` settings are in `.env.example`. A reverse proxy must forward WebSocket upgrades and use HTTPS/WSS for production.
 
 See [docs/phase5.md](docs/phase5.md) for the event protocol, APIs, indexes, retention, analytics definitions, security model, local setup, and tests. The normal Pytest and Playwright commands above include Phase 5 tests and Phases 1–4 regressions. Browser tests exercise real WebSockets through a production Next.js build and real local MongoDB with mocked provider/container adapters. Real Docker validation remains a separate local command. No Phase 6 work is included.
+
+
+## Phase 6: security hardening
+
+See [docs/phase6.md](docs/phase6.md) for the findings, enforced protections, residual risks, audit-key migration, and test results. The update adds whole-batch tool validation, live tool/sandbox authorization checks, bounded provider reads and fixed network destinations, request/hash admission limits, shared WebSocket leases, signed audit records, and stronger redaction including historical responses. Existing sandbox restrictions remain unchanged. Model instructions do not grant tool permissions, and no claim of complete prompt-injection prevention is made.
+
+Use `bash scripts/run-backend.sh` from the repository root for bounded local transport settings. Optionally set a separate stable `AUDIT_SIGNING_KEY` **before the first Phase 6 start**; otherwise signatures derive from `JWT_SECRET`, so later JWT-key rotation affects audit verification. Preserve existing secrets/data. Legacy unsigned audit events remain visible and are labeled; signatures are not an external tamper-proof archive. No Phase 7 work is included.

@@ -16,6 +16,7 @@ type Event = {
   policy_decision: string | null;
   execution_result: string | null;
   duration: number | null;
+  integrity?: "verified" | "legacy_unverified";
 };
 type Summary = {
   agent_executions: { total: number; successful: number; failed: number };
@@ -437,6 +438,9 @@ export default function Monitoring() {
                 {e.policy_decision ? `${e.policy_decision} · ` : ""}
                 {e.execution_result || "Status update"}
                 {e.duration !== null ? ` · ${e.duration}s` : ""}
+                {e.integrity === "legacy_unverified"
+                  ? " · Legacy audit (unsigned)"
+                  : ""}
               </p>
             </li>
           ))}

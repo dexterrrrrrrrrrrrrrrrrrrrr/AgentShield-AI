@@ -1,11 +1,10 @@
 """Provider errors are mapped without leaking response bodies or credentials."""
 
-import json
-
 import groq
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from ..guards import strict_json
 from .tools import ToolRequest, definitions
 
 
@@ -22,6 +21,40 @@ class Reply(BaseModel):
     calls: list[ToolRequest] = Field(default_factory=list, max_length=10)
 
 
+async def read_bounded(response):
+    """Bound decompressed response bytes while reading, before JSON/schema parsing."""
+    if response.headers.get("content-encoding", "identity").lower() != "identity":
+        raise ProviderError("Unsupported provider response encoding")
+    length = response.headers.get("content-length", "")
+    if length.isdigit() and int(length) > 100000:
+        raise ProviderError("Provider response exceeded the size limit")
+    body = bytearray()
+    async for chunk in (
+        response.aiter_bytes(chunk_size=8192)
+        if hasattr(response, "aiter_bytes")
+        else response.iter_bytes(chunk_size=8192)
+    ):
+        if len(body) + len(chunk) > 100000:
+            raise ProviderError("Provider response exceeded the size limit")
+        body.extend(chunk)
+    return strict_json(bytes(body))
+
+
+def reply_from(message, groq_arguments=False):
+    return Reply(
+        content=message.get("content") or "",
+        calls=[
+            ToolRequest(
+                name=c["function"]["name"],
+                arguments=strict_json(c["function"]["arguments"])
+                if groq_arguments
+                else c["function"]["arguments"],
+            )
+            for c in message.get("tool_calls") or []
+        ],
+    )
+
+
 class Providers:
     def __init__(self, settings):
         self.settings = settings
@@ -31,6 +64,8 @@ class Providers:
     ) -> Reply:
         s = self.settings
         try:
+            if provider not in ("groq", "ollama"):
+                raise ProviderError("Provider is not permitted", 422)
             if provider == "groq":
                 if not s.groq_api_key.get_secret_value():
                     raise ProviderError(
@@ -40,26 +75,25 @@ class Providers:
                     api_key=s.groq_api_key.get_secret_value(),
                     timeout=s.agent_provider_timeout,
                     max_retries=0,
+                    base_url="https://api.groq.com",
+                    default_headers={"Accept-Encoding": "identity"},
+                    http_client=groq.DefaultAsyncHttpxClient(follow_redirects=False),
                 ) as client:
                     # Explicit availability check; no silent model or provider fallback.
-                    await client.models.retrieve(model)
-                    result = await client.chat.completions.create(
+                    async with client.models.with_streaming_response.retrieve(
+                        model
+                    ) as response:
+                        await read_bounded(response)
+                    async with client.chat.completions.with_streaming_response.create(
                         model=model,
                         messages=messages,
                         tools=definitions(allowed) or None,
                         max_completion_tokens=1024,
                         temperature=0.2,
-                    )
-                    message = result.choices[0].message
-                    return Reply(
-                        content=message.content or "",
-                        calls=[
-                            ToolRequest(
-                                name=c.function.name,
-                                arguments=json.loads(c.function.arguments),
-                            )
-                            for c in message.tool_calls or []
-                        ],
+                    ) as response:
+                        result = await read_bounded(response)
+                    return reply_from(
+                        result["choices"][0]["message"], groq_arguments=True
                     )
             if not s.ollama_enabled:
                 raise ProviderError(
@@ -68,16 +102,22 @@ class Providers:
                 )
             # URL is operator-configured and restricted to loopback; never supplied by users/models.
             async with httpx.AsyncClient(
-                base_url=s.ollama_url, timeout=s.agent_provider_timeout, trust_env=False
+                base_url=s.ollama_url.replace("localhost", "127.0.0.1"),
+                timeout=s.agent_provider_timeout,
+                trust_env=False,
+                follow_redirects=False,
+                headers={"Accept-Encoding": "identity"},
             ) as client:
-                tags = await client.get("/api/tags")
-                tags.raise_for_status()
-                if model not in [m["name"] for m in tags.json().get("models", [])]:
+                async with client.stream("GET", "/api/tags") as response:
+                    response.raise_for_status()
+                    tags = await read_bounded(response)
+                if model not in [m["name"] for m in tags.get("models", [])]:
                     raise ProviderError(
                         "The selected Ollama model is not installed. No model was downloaded.",
                         422,
                     )
-                result = await client.post(
+                async with client.stream(
+                    "POST",
                     "/api/chat",
                     json={
                         "model": model,
@@ -87,21 +127,10 @@ class Providers:
                         "keep_alive": "1m",
                         "options": {"num_ctx": 4096, "num_predict": 1024},
                     },
-                )
-                result.raise_for_status()
-                if len(result.content) > 100000:
-                    raise ProviderError("Provider response exceeded the size limit")
-                message = result.json()["message"]
-                return Reply(
-                    content=message.get("content", ""),
-                    calls=[
-                        ToolRequest(
-                            name=c["function"]["name"],
-                            arguments=c["function"]["arguments"],
-                        )
-                        for c in message.get("tool_calls", [])
-                    ],
-                )
+                ) as response:
+                    response.raise_for_status()
+                    result = await read_bounded(response)
+                return reply_from(result["message"])
         except groq.AuthenticationError:
             raise ProviderError(
                 "Groq rejected the API credentials. Check the backend key.", 503
@@ -134,6 +163,8 @@ class Providers:
             IndexError,
             ValidationError,
             TypeError,
+            RecursionError,
+            AttributeError,
         ):
             raise ProviderError(
                 "The model provider returned an invalid or unavailable response."

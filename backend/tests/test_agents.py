@@ -289,7 +289,10 @@ def test_official_groq_error_mapping(settings, monkeypatch, status, expected):
         groq,
         "AsyncGroq",
         lambda **kw: real(
-            **kw, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            **{k: v for k, v in kw.items() if k != "http_client"},
+            http_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(handler), follow_redirects=False
+            ),
         ),
     )
     with pytest.raises(ProviderError, match=expected):
@@ -326,7 +329,10 @@ def test_official_groq_success_and_timeout(settings, monkeypatch):
         groq,
         "AsyncGroq",
         lambda **kw: real(
-            **kw, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            **{k: v for k, v in kw.items() if k != "http_client"},
+            http_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(handler), follow_redirects=False
+            ),
         ),
     )
     assert (
@@ -343,7 +349,10 @@ def test_official_groq_success_and_timeout(settings, monkeypatch):
         groq,
         "AsyncGroq",
         lambda **kw: real(
-            **kw, http_client=httpx.AsyncClient(transport=httpx.MockTransport(timeout))
+            **{k: v for k, v in kw.items() if k != "http_client"},
+            http_client=httpx.AsyncClient(
+                transport=httpx.MockTransport(timeout), follow_redirects=False
+            ),
         ),
     )
     with pytest.raises(ProviderError, match="timed out"):
