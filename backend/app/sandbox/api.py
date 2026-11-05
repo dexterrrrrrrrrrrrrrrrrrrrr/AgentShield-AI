@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
-from ..security import current_identity, limit_attempts, require_csrf
+from ..security import current_identity, limit_attempts, require_csrf, utcnow
 from .policy import CodeRequest
 from .service import SandboxService
 
@@ -87,7 +87,12 @@ async def execution(eid: ID, request: Request, identity=Depends(current_identity
         raise HTTPException(404, "Execution not found")
     result = SandboxService.public(item, request.app.state.settings)
     pending = await request.app.state.db.sandbox_approvals.find_one(
-        {"_id": eid, "user_id": uid, "state": "pending"}
+        {
+            "_id": eid,
+            "user_id": uid,
+            "state": "pending",
+            "expires_at": {"$gt": utcnow()},
+        }
     )
     if pending:
         result["approval_request"] = (

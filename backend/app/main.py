@@ -16,6 +16,7 @@ from .auth import router
 from .config import Settings
 from .database import connect_database
 from .guards import strict_json
+from .hosts import HostAdmissionMiddleware
 from .monitoring.api import router as monitor_router
 from .monitoring.events import AuditIntegrityError, Monitor
 from .sandbox.api import router as sandbox_router
@@ -114,6 +115,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["Accept", "Content-Type", "X-CSRF-Token"],
     )
+    app.add_middleware(HostAdmissionMiddleware, allowed_hosts=settings.hosts)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):

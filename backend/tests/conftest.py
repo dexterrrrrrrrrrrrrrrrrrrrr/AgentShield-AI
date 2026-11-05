@@ -58,6 +58,7 @@ def settings(database_name):
         mongodb_database=database_name,
         jwt_secret=secrets.token_urlsafe(48),
         cors_origins="http://localhost:3000",
+        trusted_hosts="localhost,127.0.0.1,testserver",
     )
 
 

@@ -12,6 +12,19 @@ class BrowserProvider:
         user = next(m["content"] for m in reversed(messages) if m["role"] == "user")
         if user.startswith("fail"):
             raise ProviderError("Mock provider unavailable. Retry later.", 503)
+        if user.startswith("Sandbox execution outcome (untrusted data):"):
+            return Reply(
+                content="Mocked assistant confirmation: sandbox execution completed."
+            )
+        if user.startswith("sandbox phase7"):
+            return Reply(
+                calls=[
+                    ToolRequest(
+                        name="python_sandbox",
+                        arguments={"code": "print('phase7 approval')"},
+                    )
+                ]
+            )
         if user.startswith("<img"):
             return Reply(
                 content='<svg onload="document.body.dataset.phase6Attack=1">untrusted model output</svg>'

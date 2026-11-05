@@ -23,6 +23,8 @@ class State(TypedDict):
     done: bool
     answer: str
     reply: object
+    status: str
+    pending_execution_ids: list[str]
 
 
 class Engine:
@@ -40,6 +42,8 @@ class Engine:
         sandbox_dispatch=None,
         on_event=None,
         authorize_tool=None,
+        iteration_offset=0,
+        tool_offset=0,
     ):
         s = self.s
         secrets = credential_values(s)
@@ -74,6 +78,7 @@ class Engine:
                     )
                 state["answer"] = clean(reply.content)
                 state["done"] = True
+                state["status"] = "completed"
                 state["events"].append({"kind": "completed"})
             return state
 
@@ -140,9 +145,8 @@ class Engine:
                     if request.name == "python_sandbox":
                         if request.name not in allowed or sandbox_dispatch is None:
                             raise ToolRejected("Sandbox dispatch is not authorized")
-                        result = json.dumps(
-                            await sandbox_dispatch(request.arguments), default=str
-                        )
+                        outcome = await sandbox_dispatch(request.arguments)
+                        result = json.dumps(outcome, default=str)
                     else:
                         result = execute(request, allowed)
                         await notify("tool_completed", request.name, result="completed")
@@ -166,6 +170,27 @@ class Engine:
                 state["messages"].append(
                     {"role": "tool", "tool_call_id": call["id"], "content": result}
                 )
+                if request.name == "python_sandbox":
+                    status = outcome.get("status")
+                    if status == "pending_approval":
+                        state["status"] = "awaiting_approval"
+                        state["pending_execution_ids"] = [outcome["id"]]
+                        state["answer"] = (
+                            "Python execution is awaiting your approval. Review the exact request in Sandbox or Monitoring, then continue after the decision. No code has run."
+                        )
+                        state["events"].append(
+                            {"kind": "approval_pending", "execution_id": outcome["id"]}
+                        )
+                        return state
+                    if status != "completed":
+                        state["status"] = "failed"
+                        state["answer"] = (
+                            f"Sandbox execution did not complete ({status or 'unavailable'}). Review its execution record before retrying."
+                        )
+                        state["events"].append(
+                            {"kind": "failed", "code": "SANDBOX_EXECUTION_FAILED"}
+                        )
+                        return state
             return state
 
         graph = StateGraph(State)
@@ -177,15 +202,21 @@ class Engine:
             lambda state: "done" if state["done"] else "tools",
             {"done": END, "tools": "tools"},
         )
-        graph.add_edge("tools", "model")
+        graph.add_conditional_edges(
+            "tools",
+            lambda state: "model" if state["status"] == "running" else "stop",
+            {"model": "model", "stop": END},
+        )
         state = State(
             messages=[{"role": "system", "content": SYSTEM}, *history],
             events=[],
-            iterations=0,
-            tool_count=0,
+            iterations=iteration_offset,
+            tool_count=tool_offset,
             done=False,
             answer="",
             reply=None,
+            status="running",
+            pending_execution_ids=[],
         )
         try:
             async with asyncio.timeout(s.agent_request_timeout):
@@ -195,9 +226,12 @@ class Engine:
                             state, {"recursion_limit": 2 * s.agent_max_iterations + 3}
                         )
             return {
-                "status": "completed",
+                "status": result["status"],
                 "answer": result["answer"],
                 "events": result["events"],
+                "iterations": result["iterations"],
+                "tool_count": result["tool_count"],
+                "pending_execution_ids": result["pending_execution_ids"],
             }
         except TimeoutError:
             return {

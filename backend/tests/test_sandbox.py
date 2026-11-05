@@ -360,7 +360,7 @@ def test_langgraph_sandbox_dispatch_requires_session_allowlist(client):
         json={"content": "Request Python execution"},
         headers=csrf_headers(client),
     )
-    assert result.status_code == 200 and result.json()["status"] == "completed"
+    assert result.status_code == 200 and result.json()["status"] == "awaiting_approval"
     assert adapter.codes == []
     execution = db_call(
         client, "execution_logs", "find_one", {"agent_session_id": session["id"]}
@@ -372,6 +372,22 @@ def test_langgraph_sandbox_dispatch_requires_session_allowlist(client):
             ToolRequest(name="python_sandbox", arguments={"code": "print(1)"}),
             ["python_sandbox"],
         )
+    # Resolve the paused request through a real authenticated rejection first.
+    assert (
+        client.post(
+            "/api/sandbox/approvals/" + execution["_id"] + "/reject",
+            json={"reject": True, "request_hash": execution["request_hash"]},
+            headers=csrf_headers(client),
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/api/agent/sessions/{session['id']}/messages/{result.json()['id']}/resolve",
+            headers=csrf_headers(client),
+        ).json()["status"]
+        == "failed"
+    )
     # Removing the tool from the immutable session's allowlist denies model requests.
     db_call(
         client,

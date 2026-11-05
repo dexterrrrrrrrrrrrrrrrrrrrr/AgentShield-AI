@@ -53,13 +53,17 @@ class UserResponse(BaseModel):
     email: EmailStr
     created_at: datetime
     authenticated: bool = True
+    session_expires_at: datetime | None = None
 
 
-def public_user(user: dict, authenticated: bool = True) -> UserResponse:
+def public_user(
+    user: dict, authenticated: bool = True, session_expires_at: datetime | None = None
+) -> UserResponse:
     return UserResponse(
         id=user["_id"],
         full_name=user["full_name"],
         email=user["email"],
         created_at=user["created_at"],
         authenticated=authenticated,
+        session_expires_at=session_expires_at,
     )

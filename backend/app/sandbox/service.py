@@ -13,7 +13,9 @@ from .policy import CodeRequest, Decision, evaluate, fingerprint, limits
 
 
 class SandboxService:
-    def __init__(self, db, settings, manager, monitor=None, authorize=None):
+    def __init__(
+        self, db, settings, manager, monitor=None, authorize=None, agent_turn_id=None
+    ):
         self.db = db
         self.s = settings
         self.manager = manager
@@ -23,6 +25,7 @@ class SandboxService:
             monitor = Monitor(db, settings)
         self.monitor = monitor
         self.authorize = authorize
+        self.agent_turn_id = agent_turn_id
 
     def validate_code(self, code):
         if any(v in code for v in credential_values(self.s)) or CREDENTIAL.search(code):
@@ -93,6 +96,7 @@ class SandboxService:
             "_id": eid,
             "user_id": uid,
             "agent_session_id": payload.agent_session_id,
+            "agent_turn_id": self.agent_turn_id,
             "tool": payload.tool,
             "policy_decision": str(decision),
             "request_hash": digest,
@@ -199,7 +203,13 @@ class SandboxService:
                 "state": "pending",
                 "expires_at": {"$gt": utcnow()},
             },
-            {"$set": {"state": "used"}, "$unset": {"request": ""}},
+            {
+                "$set": {
+                    "state": "used",
+                    "expires_at": utcnow() + timedelta(seconds=120),
+                },
+                "$unset": {"request": ""},
+            },
             return_document=ReturnDocument.BEFORE,
         )
         if not used:
@@ -376,7 +386,7 @@ class SandboxService:
             **{
                 k: v
                 for k, v in item.items()
-                if k not in ("_id", "user_id", "expires_at")
+                if k not in ("_id", "user_id", "expires_at", "agent_turn_id")
             },
         }
         if settings:

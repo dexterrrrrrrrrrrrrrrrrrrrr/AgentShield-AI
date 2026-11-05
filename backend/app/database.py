@@ -4,6 +4,7 @@ from pymongo import AsyncMongoClient
 from pymongo.errors import PyMongoError
 
 from .config import Settings
+from .security import utcnow
 
 # All collections through Phase 5 are initialized below.
 FUTURE_COLLECTIONS = ()
@@ -53,6 +54,11 @@ async def connect_database(settings: Settings):
         await db.sandbox_approvals.create_index("expires_at", expireAfterSeconds=0)
         await db.sandbox_approvals.create_index(
             [("user_id", 1), ("state", 1), ("expires_at", 1)]
+        )
+        # Initialize the shared execution lock once; never reset a live lease or
+        # the fail-closed blocked latch when another API process starts.
+        await db.sandbox_locks.update_one(
+            {"_id": "execution"}, {"$setOnInsert": {"until": utcnow()}}, upsert=True
         )
         await db.monitor_streams.create_index("user_id", unique=True)
         await db.monitor_connections.update_one(

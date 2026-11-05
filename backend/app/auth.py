@@ -2,6 +2,7 @@ import secrets
 import uuid
 from datetime import timedelta
 
+import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pymongo.errors import DuplicateKeyError
 
@@ -9,6 +10,7 @@ from .schemas import LoginInput, RegisterInput, UserResponse, public_user
 from .security import (
     cookie_options,
     current_identity,
+    decode_token,
     encode_token,
     limit_attempts,
     require_csrf,
@@ -22,9 +24,16 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 @router.get("/csrf")
 async def csrf(request: Request, response: Response):
     settings = request.app.state.settings
+    subject = session_id_from_cookie(request)
+    existing = request.cookies.get(settings.csrf_cookie, "")
+    try:
+        if decode_token(settings, existing, "csrf")["sub"] == subject:
+            return {"csrf_token": existing}
+    except jwt.InvalidTokenError:
+        pass
     token = encode_token(
         settings,
-        subject=session_id_from_cookie(request),
+        subject=subject,
         token_id=secrets.token_urlsafe(32),
         use="csrf",
         expires=utcnow() + timedelta(minutes=30),
@@ -91,7 +100,8 @@ async def login(payload: LoginInput, request: Request, response: Response):
                 }
             },
         )
-    now = utcnow()
+    # JWT NumericDate is whole seconds; expose the same real expiration in JSON.
+    now = utcnow().replace(microsecond=0)
     expires = now + timedelta(minutes=settings.access_token_minutes)
     sid = secrets.token_urlsafe(32)
     await db.sessions.insert_one(
@@ -113,12 +123,12 @@ async def login(payload: LoginInput, request: Request, response: Response):
         httponly=True,
         samesite="lax",
     )
-    return public_user(user)
+    return public_user(user, session_expires_at=expires)
 
 
 @router.get("/me", response_model=UserResponse)
 async def me(identity=Depends(current_identity)):
-    return public_user(identity[0])
+    return public_user(identity[0], session_expires_at=identity[1]["expires_at"])
 
 
 @router.post("/logout", status_code=204, dependencies=[Depends(require_csrf)])

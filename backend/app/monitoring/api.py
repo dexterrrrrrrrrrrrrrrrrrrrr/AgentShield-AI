@@ -32,7 +32,11 @@ async def grouped(collection, query, field):
 
 
 @router.get("/summary")
-async def summary(request: Request, identity=Depends(current_identity)):
+async def summary(
+    request: Request,
+    frontend_origin: str | None = Query(None, max_length=200),
+    identity=Depends(current_identity),
+):
     uid = identity[0]["_id"]
     db = request.app.state.db
     await limit_attempts(request, "monitor_read", uid, 360)
@@ -65,6 +69,10 @@ async def summary(request: Request, identity=Depends(current_identity)):
         {"user_id": uid, "kind": "monitor_event", "event.kind": "tool_rejected"}
     )
     return {
+        "websocket_origin_allowed": frontend_origin
+        in request.app.state.settings.origins
+        if frontend_origin is not None
+        else None,
         "agent_executions": {
             "total": sum(agents.values()),
             "successful": agents.get("completed", 0),

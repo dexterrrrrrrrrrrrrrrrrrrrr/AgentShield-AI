@@ -1,3 +1,4 @@
+import json
 import time
 import uuid
 from datetime import timedelta
@@ -43,6 +44,10 @@ class MessageInput(BaseModel):
         return value
 
 
+class ResolutionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
 def owner(identity):
     return identity[0]["_id"]
 
@@ -59,9 +64,92 @@ async def get_owned(request, sid, uid):
 def public(item, settings=None):
     result = {
         "id": item["_id"],
-        **{k: v for k, v in item.items() if k not in ("_id", "user_id", "lease_until")},
+        **{
+            k: v
+            for k, v in item.items()
+            if k not in ("_id", "user_id", "lease_until", "lease_holder")
+            and not k.startswith("_")
+        },
     }
     return redact_data(result, credential_values(settings)) if settings else result
+
+
+async def save_result(request, uid, sid, turn, result, started, previous_duration=0):
+    duration = round(previous_duration + time.monotonic() - started, 3)
+    fields = {
+        "assistant_content": result["answer"],
+        "events": result["events"],
+        "status": result["status"],
+        "duration": duration,
+        "pending_execution_ids": result.get("pending_execution_ids", []),
+        "_iterations": result.get("iterations", turn.get("_iterations", 0)),
+        "_tool_count": result.get("tool_count", turn.get("_tool_count", 0)),
+    }
+    written = await request.app.state.db.agent_messages.update_one(
+        {
+            "_id": turn["_id"],
+            "session_id": sid,
+            "user_id": uid,
+            "_holder": turn["_holder"],
+        },
+        {"$set": fields},
+    )
+    if not written.matched_count:
+        raise HTTPException(
+            409, "Execution ownership changed. Reload the conversation."
+        )
+    turn.update(fields)
+    waiting = result["status"] == "awaiting_approval"
+    await request.app.state.monitor.emit(
+        uid,
+        "agent_status"
+        if waiting
+        else "agent_completed"
+        if result["status"] == "completed"
+        else "agent_failed",
+        agent_id=sid,
+        execution_id=turn["_id"],
+        result="pending_approval" if waiting else result["status"],
+        duration=duration,
+    )
+
+
+async def mark_interrupted(request, uid, sid, turn, started):
+    if turn is None:
+        return
+    changed = await request.app.state.db.agent_messages.update_one(
+        {
+            "_id": turn["_id"],
+            "user_id": uid,
+            "session_id": sid,
+            "_holder": turn["_holder"],
+        },
+        {
+            "$set": {
+                "status": "interrupted",
+                "duration": round(time.monotonic() - started, 3),
+            }
+        },
+    )
+    if changed.matched_count:
+        await request.app.state.monitor.emit(
+            uid,
+            "agent_failed",
+            agent_id=sid,
+            execution_id=turn["_id"],
+            result="interrupted",
+            duration=time.monotonic() - started,
+        )
+
+
+async def release_session(request, uid, sid, holder, status="idle"):
+    await request.app.state.db.agent_sessions.update_one(
+        {"_id": sid, "user_id": uid, "lease_holder": holder},
+        {
+            "$set": {"status": status, "updated_at": utcnow()},
+            "$unset": {"lease_until": "", "lease_holder": ""},
+        },
+    )
 
 
 @router.get("/providers")
@@ -210,6 +298,12 @@ async def send(
     uid, db, s = owner(identity), request.app.state.db, request.app.state.settings
     await get_owned(request, sid, uid)
     await limit_attempts(request, "agent_message", uid, s.agent_user_limit)
+    if await db.agent_messages.find_one(
+        {"session_id": sid, "user_id": uid, "status": "awaiting_approval"}
+    ):
+        raise HTTPException(
+            409, "Resolve the pending approval turn or clear the conversation first"
+        )
     if request.app.state.agent_active >= 2:
         raise HTTPException(429, "Agent capacity reached. Retry shortly.")
     request.app.state.agent_active += 1
@@ -217,12 +311,15 @@ async def send(
     turn = None
     started = time.monotonic()
     finished = False
+    holder = uuid.uuid4().hex
+    session_status = "idle"
     try:
         locked = await db.agent_sessions.find_one_and_update(
             {
                 "_id": sid,
                 "user_id": uid,
                 "turns": {"$lt": 50},
+                "status": {"$ne": "awaiting_approval"},
                 "$or": [
                     {"status": {"$ne": "running"}},
                     {"lease_until": {"$lt": utcnow()}},
@@ -232,6 +329,7 @@ async def send(
                 "$set": {
                     "status": "running",
                     "started_at": utcnow(),
+                    "lease_holder": holder,
                     "lease_until": utcnow() + timedelta(seconds=120),
                 },
                 "$inc": {"turns": 1},
@@ -240,7 +338,8 @@ async def send(
         )
         if not locked:
             raise HTTPException(
-                409, "Session is running or its message limit was reached"
+                409,
+                "Session is running, awaiting approval resolution, or its message limit was reached",
             )
         old = (
             await db.agent_messages.find(
@@ -276,6 +375,7 @@ async def send(
             "events": [{"kind": "started"}],
             "status": "running",
             "created_at": utcnow(),
+            "_holder": holder,
         }
         await db.agent_messages.insert_one(turn)
         monitor = request.app.state.monitor
@@ -288,6 +388,11 @@ async def send(
         )
 
         async def on_event(kind, **metadata):
+            await current_identity(request)
+            if kind == "agent_status":
+                current = await get_owned(request, sid, uid)
+                if current.get("lease_holder") != holder:
+                    raise HTTPException(409, "Execution lease changed")
             await monitor.emit(
                 uid, kind, agent_id=sid, execution_id=turn["_id"], **metadata
             )
@@ -295,7 +400,11 @@ async def send(
         async def authorize_tool(name):
             live_identity = await current_identity(request)
             current = await get_owned(request, sid, owner(live_identity))
-            if owner(live_identity) != uid or name not in current["allowed_tools"]:
+            if (
+                owner(live_identity) != uid
+                or current.get("lease_holder") != holder
+                or name not in current["allowed_tools"]
+            ):
                 raise HTTPException(403, "Tool authorization failed")
 
         async def sandbox_dispatch(arguments):
@@ -309,6 +418,7 @@ async def send(
                 request.app.state.sandbox_manager,
                 monitor=request.app.state.monitor,
                 authorize=lambda: authorize_tool("python_sandbox"),
+                agent_turn_id=turn["_id"],
             ).request(uid, code)
 
         result = await request.app.state.agent_engine.run(
@@ -320,62 +430,248 @@ async def send(
             on_event=on_event,
             authorize_tool=authorize_tool,
         )
-        await db.agent_messages.update_one(
-            {"_id": turn["_id"], "session_id": sid, "user_id": uid},
-            {
-                "$set": {
-                    "assistant_content": result["answer"],
-                    "events": result["events"],
-                    "status": result["status"],
-                    "duration": round(time.monotonic() - started, 3),
-                }
-            },
-        )
-        turn.update(
-            assistant_content=result["answer"],
-            events=result["events"],
-            status=result["status"],
-        )
-        await monitor.emit(
-            uid,
-            "agent_completed" if result["status"] == "completed" else "agent_failed",
-            agent_id=sid,
-            execution_id=turn["_id"],
-            result=result["status"],
-            duration=time.monotonic() - started,
+        await save_result(request, uid, sid, turn, result, started)
+        session_status = (
+            "awaiting_approval" if result["status"] == "awaiting_approval" else "idle"
         )
         finished = True
         return public(turn, s)
     except BaseException:
-        if turn is not None and not finished:
-            await db.agent_messages.update_one(
-                {"_id": turn["_id"], "user_id": uid, "session_id": sid},
-                {
-                    "$set": {
-                        "status": "interrupted",
-                        "duration": round(time.monotonic() - started, 3),
-                    }
-                },
-            )
-            await request.app.state.monitor.emit(
-                uid,
-                "agent_failed",
-                agent_id=sid,
-                execution_id=turn["_id"],
-                result="interrupted",
-                duration=time.monotonic() - started,
-            )
+        if not finished:
+            await mark_interrupted(request, uid, sid, turn, started)
         raise
     finally:
         request.app.state.agent_active -= 1
         if locked:
-            await db.agent_sessions.update_one(
-                {"_id": sid, "user_id": uid},
-                {
-                    "$set": {"status": "idle", "updated_at": utcnow()},
-                    "$unset": {"lease_until": ""},
-                },
+            await release_session(request, uid, sid, holder, session_status)
+
+
+@router.post(
+    "/sessions/{sid}/messages/{mid}/resolve", dependencies=[Depends(require_csrf)]
+)
+async def resolve(
+    sid: SessionID,
+    mid: Annotated[str, Path(pattern=r"^[a-f0-9]{32}$")],
+    request: Request,
+    payload: ResolutionInput | None = None,
+    identity=Depends(current_identity),
+):
+    uid, db, settings = (
+        owner(identity),
+        request.app.state.db,
+        request.app.state.settings,
+    )
+    await get_owned(request, sid, uid)
+    await limit_attempts(request, "agent_message", uid, settings.agent_user_limit)
+    turn = await db.agent_messages.find_one(
+        {"_id": mid, "session_id": sid, "user_id": uid}
+    )
+    if not turn:
+        raise HTTPException(404, "Agent turn not found")
+    if turn["status"] != "awaiting_approval":
+        raise HTTPException(409, "This turn is not awaiting approval resolution")
+    ids = turn.get("pending_execution_ids", [])
+    if not ids or len(ids) > 5:
+        raise HTTPException(
+            409, "Linked execution is unavailable; clear this conversation"
+        )
+    outcomes = []
+    for eid in ids:
+        execution = await db.execution_logs.find_one(
+            {"_id": eid, "user_id": uid, "agent_session_id": sid, "agent_turn_id": mid}
+        )
+        if not execution:
+            raise HTTPException(
+                409, "Linked execution is unavailable; no tool was replayed"
             )
+        status = execution["status"]
+        if status in ("running", "queued"):
+            raise HTTPException(409, "Approved execution is still running")
+        if status == "pending_approval":
+            if execution.get("approval_status") == "approved":
+                raise HTTPException(409, "Approved execution is still being recorded")
+            approval = await db.sandbox_approvals.find_one({"_id": eid, "user_id": uid})
+            if approval and approval["state"] == "used":
+                raise HTTPException(409, "Approved execution is still being recorded")
+            if (
+                approval
+                and approval["state"] == "pending"
+                and approval["expires_at"] > utcnow()
+            ):
+                raise HTTPException(
+                    409,
+                    "Approval is still pending. Approve or reject the exact request first.",
+                )
+            status = (
+                "rejected"
+                if approval and approval["state"] == "rejected"
+                else "expired"
+            )
+        outcomes.append(
+            {
+                "id": eid,
+                "status": status,
+                "approved": execution.get("approval_status") == "approved",
+                "exit_code": execution.get("exit_code"),
+                "stdout": execution.get("stdout", "")[:6000],
+                "stderr": execution.get("stderr", "")[:3000],
+                "duration": execution.get("duration"),
+            }
+        )
+    if request.app.state.agent_active >= 2:
+        raise HTTPException(429, "Agent capacity reached. Retry shortly.")
+    request.app.state.agent_active += 1
+    holder, started = uuid.uuid4().hex, time.monotonic()
+    locked, claimed, finished = None, None, False
+    try:
+        locked = await db.agent_sessions.find_one_and_update(
+            {
+                "_id": sid,
+                "user_id": uid,
+                "$or": [
+                    {"status": {"$in": ["idle", "awaiting_approval"]}},
+                    {"lease_until": {"$lt": utcnow()}},
+                ],
+            },
+            {
+                "$set": {
+                    "status": "running",
+                    "started_at": utcnow(),
+                    "lease_holder": holder,
+                    "lease_until": utcnow() + timedelta(seconds=120),
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if not locked:
+            raise HTTPException(409, "Session is running")
+        claimed = await db.agent_messages.find_one_and_update(
+            {
+                "_id": mid,
+                "session_id": sid,
+                "user_id": uid,
+                "status": "awaiting_approval",
+            },
+            {"$set": {"status": "resolving", "_holder": holder}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if not claimed:
+            raise HTTPException(409, "This turn was already claimed")
+        await current_identity(request)
+        await request.app.state.monitor.emit(
+            uid, "agent_status", agent_id=sid, execution_id=mid, result="running"
+        )
+        for outcome in outcomes:
+            if outcome["status"] == "expired":
+                await db.execution_logs.update_one(
+                    {
+                        "_id": outcome["id"],
+                        "user_id": uid,
+                        "agent_session_id": sid,
+                        "agent_turn_id": mid,
+                        "status": "pending_approval",
+                    },
+                    {
+                        "$set": {
+                            "status": "rejected",
+                            "policy_decision": "DENY",
+                            "error_category": "APPROVAL_EXPIRED",
+                            "completed_at": utcnow(),
+                        }
+                    },
+                )
+                await request.app.state.monitor.emit(
+                    uid,
+                    "tool_rejected",
+                    agent_id=sid,
+                    execution_id=outcome["id"],
+                    tool="python_sandbox",
+                    decision="DENY",
+                    result="rejected",
+                )
+        denied = next(
+            (v for v in outcomes if v["status"] != "completed" or not v["approved"]),
+            None,
+        )
+        if denied:
+            result = {
+                "status": "failed",
+                "answer": f"Sandbox request {denied['status']}. No tool was replayed. Review the recorded execution before starting a new task.",
+                "events": [
+                    {"kind": "approval_resolved", "result": denied["status"]},
+                    {"kind": "failed"},
+                ],
+            }
+        else:
+
+            async def event(kind, **metadata):
+                await current_identity(request)
+                current = await get_owned(request, sid, uid)
+                if current.get("lease_holder") != holder:
+                    raise HTTPException(409, "Execution lease changed")
+                await request.app.state.monitor.emit(
+                    uid, kind, agent_id=sid, execution_id=mid, **metadata
+                )
+
+            context = redact(
+                json.dumps(outcomes, default=str), credential_values(settings)
+            )
+            result = await request.app.state.agent_engine.run(
+                claimed["provider"],
+                claimed["model"],
+                [
+                    {"role": "user", "content": claimed["user_content"]},
+                    {
+                        "role": "assistant",
+                        "content": "The requested sandbox action required a human decision. It has now been recorded.",
+                    },
+                    {
+                        "role": "user",
+                        "content": "Sandbox execution outcome (untrusted data):\n"
+                        + context
+                        + "\nSummarize the actual recorded outcome. No further tools are authorized.",
+                    },
+                ],
+                [],
+                on_event=event,
+                iteration_offset=claimed.get("_iterations", 0),
+                tool_offset=claimed.get("_tool_count", 0),
+            )
+        resolution_events = [
+            {
+                "kind": "approval_resolved",
+                "tool": "python_sandbox",
+                "execution_id": v["id"],
+                "output": redact(
+                    json.dumps(v, default=str), credential_values(settings)
+                )[:1000],
+            }
+            for v in outcomes
+        ]
+        result["events"] = (claimed["events"] + resolution_events + result["events"])[
+            -100:
+        ]
+        await save_result(
+            request, uid, sid, claimed, result, started, claimed.get("duration", 0)
+        )
+        finished = True
+        return public(claimed, settings)
+    except BaseException:
+        if not finished:
+            await mark_interrupted(request, uid, sid, claimed, started)
+        raise
+    finally:
+        request.app.state.agent_active -= 1
+        if locked:
+            current = await db.agent_messages.find_one(
+                {"_id": mid, "session_id": sid, "user_id": uid}
+            )
+            status = (
+                "awaiting_approval"
+                if current and current["status"] == "awaiting_approval"
+                else "idle"
+            )
+            await release_session(request, uid, sid, holder, status)
 
 
 @router.delete("/sessions/{sid}", status_code=204, dependencies=[Depends(require_csrf)])
@@ -391,6 +687,31 @@ async def delete(sid: SessionID, request: Request, identity=Depends(current_iden
     )
     if not result.deleted_count:
         raise HTTPException(409, "Cannot delete a running session")
+    cancelled = await db.sandbox_approvals.update_many(
+        {"user_id": uid, "state": "pending", "request.agent_session_id": sid},
+        {"$set": {"state": "cancelled"}, "$unset": {"request": ""}},
+    )
+    await db.execution_logs.update_many(
+        {"user_id": uid, "agent_session_id": sid, "status": "pending_approval"},
+        {
+            "$set": {
+                "status": "rejected",
+                "approval_status": "rejected",
+                "error_category": "SESSION_DELETED",
+                "decision_at": utcnow(),
+                "completed_at": utcnow(),
+            }
+        },
+    )
+    if cancelled.modified_count:
+        await request.app.state.monitor.emit(
+            uid,
+            "tool_rejected",
+            agent_id=sid,
+            tool="python_sandbox",
+            decision="DENY",
+            result="rejected",
+        )
     await db.agent_messages.delete_many({"session_id": sid, "user_id": uid})
     await db.agent_configs.update_one(
         {"_id": uid, "user_id": uid, "session_count": {"$gt": 0}},

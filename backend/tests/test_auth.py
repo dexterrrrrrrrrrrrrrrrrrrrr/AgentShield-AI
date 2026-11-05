@@ -350,6 +350,7 @@ def test_indexes_and_future_collections(client):
         "agent_configs",
         "execution_logs",
         "sandbox_approvals",
+        "sandbox_locks",
         "monitor_streams",
         "monitor_connections",
     }

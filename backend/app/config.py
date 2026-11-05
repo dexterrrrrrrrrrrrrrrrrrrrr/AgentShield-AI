@@ -1,5 +1,7 @@
 """Validated environment settings. Secret values are never logged."""
 
+import ipaddress
+import re
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
@@ -25,6 +27,7 @@ class Settings(BaseSettings):
     jwt_audience: str = Field(default="agentshield-web", min_length=1)
     access_token_minutes: int = Field(default=15, ge=1, le=30)
     cors_origins: str = "http://localhost:3000"
+    trusted_hosts: str = "localhost,127.0.0.1"
     login_email_limit: int = Field(default=5, ge=1, le=100)
     login_ip_limit: int = Field(default=30, ge=1, le=1000)
     register_ip_limit: int = Field(default=10, ge=1, le=100)
@@ -111,6 +114,31 @@ class Settings(BaseSettings):
     @property
     def origins(self) -> list[str]:
         return [v.strip() for v in self.cors_origins.split(",") if v.strip()]
+
+    @property
+    def hosts(self) -> list[str]:
+        return [v.strip().lower() for v in self.trusted_hosts.split(",") if v.strip()]
+
+    @field_validator("trusted_hosts")
+    @classmethod
+    def exact_hosts(cls, value):
+        hosts = [v.strip().lower() for v in value.split(",") if v.strip()]
+        if not hosts:
+            raise ValueError("At least one trusted host is required")
+        for host in hosts:
+            try:
+                ipaddress.ip_address(host)
+                continue
+            except ValueError:
+                pass
+            if len(host) > 253 or any(
+                not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+                for label in host.split(".")
+            ):
+                raise ValueError(
+                    "TRUSTED_HOSTS must contain exact hostnames or IPs without ports"
+                )
+        return ",".join(hosts)
 
     @property
     def secure_cookies(self) -> bool:
