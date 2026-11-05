@@ -1,59 +1,83 @@
-# Phase 3 architecture and security
+# AgentShield AI architecture
 
-## Request flow
+AgentShield combines a Next.js/TypeScript/Tailwind frontend, a single-process FastAPI/Python 3.12 API, PyMongo Async with MongoDB 7, bounded LangGraph workflows, optional Groq/Ollama providers, a fail-closed Docker adapter, and signed real-time monitoring. Authentication and authorization are enforced in the API, not by frontend navigation.
 
-The existing Next.js App Router/TypeScript/Tailwind dashboard remains. Browser auth requests use the same-origin `/api` proxy to FastAPI. Protected Next.js layouts forward only the session cookie to `/api/auth/me` with no caching and a five-second timeout. Missing or invalid sessions redirect to login; API outages show an unavailable page rather than protected content. The backend always validates authorization independently. Profile data comes only from the verified session, never a client-provided user ID.
+```mermaid
+flowchart LR
+    U[Browser: same-origin cookies] --> F[Next.js UI and API rewrite]
+    F --> A[FastAPI: Host, auth, CSRF, quotas]
+    A --> D[(MongoDB 7)]
+    A --> G[Bounded LangGraph]
+    G --> P[Groq SDK or optional loopback Ollama]
+    G --> T[Fixed tool registry]
+    T --> S[Policy and exact approval]
+    S --> R[Trusted native-host Docker manager]
+    A --> W[Owner-scoped WebSocket feed]
+    D --> W
+    W --> F
+```
 
-## MongoDB
+## Account and request boundaries
 
-A single PyMongo `AsyncMongoClient` is created in FastAPI lifespan. Startup pings MongoDB and creates indexes, and failure prevents serving. Shutdown awaits client closure. The pool starts empty, permits at most 10 connections by default, retires idle connections after 30 seconds, and bounds connection, selection, queue, and socket waits. Runtime database failures return a generic 503 without URIs or credentials.
+Registration normalizes email and stores only Argon2id hashes. Login issues an issuer/audience/purpose/expiry-validated JWT in a host-only HttpOnly/SameSite cookie and stores a revocable server-side session. Production mode requires HTTPS origins and Secure `__Host-` cookies. Authenticated responses include a safe expiry timestamp, never the access token. There are no refresh tokens or localStorage tokens.
 
-Database: `agentshield_ai` (test databases have unique, enforced test prefixes).
+State-changing routes require an exact Origin and a signed, session-bound double-submit CSRF token. Valid CSRF credentials are reused within their expiry to avoid multi-tab rotation races; login clears anonymous CSRF state. Host admission rejects unconfigured authorities for HTTP and WebSockets. Rate counters, admission limits, request byte/depth/chunk/time bounds, and bounded password work apply independently of model text.
 
-| Collection        | Fields and indexes                                                                                |
-| ----------------- | ------------------------------------------------------------------------------------------------- |
-| `users`           | Random UUID ID, normalized email, full name, Argon2id hash, UTC created date; unique email index  |
-| `sessions`        | Cryptographically random ID, owner user ID, UTC creation/expiry; owner index and expiry TTL index |
-| `security_events` | HMAC-pseudonymized fixed-window auth counters, category, count, expiry; TTL index                 |
-| `agent_configs`   | Per-owner atomic session quota; unique owner index                                                |
-| `execution_logs`  | Reserved name only; no collection, model, endpoint, or operations                                 |
+The frontend's shared protected-request helper treats401 as an invalidated session and distinguishes503/network outages from logout. Session expiry schedules a bounded recheck; explicit logout and confirmed auth failure cancel monitoring retries. Protected server layouts verify the cookie with the backend before rendering private content.
 
-TTL deletion is asynchronous, so authorization explicitly checks session expiry on every request. The unique email index resolves concurrent registration races. Email normalization intentionally case-folds the local part as an application identity policy. Request models forbid extra fields and bound string lengths; queries use validated scalar values, not client-supplied query documents.
+## Agent lifecycle
 
-## Passwords and tokens
+```mermaid
+flowchart TD
+    M[Authenticated message] --> V[Input and ownership validation]
+    V --> L[Conversation execution lease]
+    L --> G[LangGraph model step]
+    G --> B[Whole-batch tool allowlist/schema preflight]
+    B --> X{Sandbox policy outcome}
+    X -->|deny/unavailable| E[Truthful failed result and audit]
+    X -->|allowed safe tool| T[Bounded deterministic execution]
+    X -->|approval| P[Persist awaiting_approval and linked execution]
+    P --> H[Owner reviews exact request and approves/rejects]
+    H --> R[Atomic single-use decision and revalidation]
+    R --> O[Actual execution outcome stored]
+    O --> C[Owner selects Continue after decision]
+    C --> F[Single-use original-turn resolution]
+    F --> A[Bounded final model response with tools disabled]
+    T --> G
+```
 
-Argon2id uses 19 MiB, two iterations, and parallelism one, with per-password salts. Two hashing slots and offloaded work keep CPU-bound operations off the async event loop and bound active hash memory. Unknown users still verify a dummy hash; invalid credentials return one generic response. Outdated password hashes are upgraded after successful login. Passwords and confirmation values are never returned, logged, or included in validation errors.
+Groq is the primary optional provider; no key is required for account/dashboard/monitoring startup. Missing keys and provider errors fail clearly rather than fabricating answers. Ollama remains opt-in and loopback-only in native-host mode. Neither provider is selected or downloaded automatically. Provider reads, request duration, model iterations, tool count, code/input/output sizes, and conversation context are bounded.
 
-Access JWTs use HS256 with a required randomly generated secret of at least 32 bytes. Verification fixes the algorithm and requires issuer, audience, subject, session ID, issue time, not-before time, expiration, and an access-token purpose. Default lifetime is 15 minutes, maximum 30. No token is returned in JSON or stored in localStorage. Session records store no JWTs. JWT subject and session owner must match; a deleted/expired session or missing user rejects even a cryptographically valid token. Logout deletes only the current user's current session, immediately revoking captured copies.
+Tool names and schemas are fixed server code. The existing session-creation API stores the chosen provider, server-enabled model, and allowed tools. User configuration can reduce the allowlist; it cannot add capabilities or change policies. Calculator uses an AST whitelist, summarization is bounded extractive text processing, JSON formatting is strict, and Python execution enters only through the sandbox service. No unrestricted host shell/file/network tool exists.
 
-## Cookies and CSRF
+A pending approval is an actual paused application turn, not a successful tool response. The server binds the execution to that turn, user, and conversation. The decision is expiring, content/policy-bound and single-use. Resolution consumes the stored outcome once; it never submits Python again. It is an explicit frontend action so another provider request is visible to the user. Finalization has no tools and respects the retained iteration budget. Further tool work requires a new user turn. This avoids a background/checkpointer service and indefinite HTTP waits. See the API documentation for exact paths and response fields.
 
-JWT cookies are HttpOnly, host-only, SameSite=Lax, and scoped to `/`. Production mode requires HTTPS origins and sets Secure with the `__Host-` prefix (no Domain attribute). HTTP cookies are allowed only by the explicit development/test mode. CSRF cookies are HttpOnly too; JavaScript receives the CSRF token from a same-origin JSON endpoint and retains it only for the request.
+## Persistence and bounded reads
 
-All state-changing auth endpoints, including login and registration, require an exact allowed Origin and matching cookie/header CSRF token. The token is signed, expires after 30 minutes, uses a separate JWT audience/purpose, and is bound to the access token's session ID (or the anonymous state before login). Login clears the anonymous CSRF cookie. A signed token copied from another session fails. CORS uses exact origins and credentials, never a wildcard. Origin checking remains independent of CORS.
+| Collection | Purpose |
+| --- | --- |
+| `users` | Normalized unique email, public profile, Argon2id hash |
+| `sessions` | Owner-bound revocable JWT session IDs and expiry TTL |
+| `agent_sessions` | Provider/model/allowlist, turn count, status and fenced execution lease |
+| `agent_messages` | Owned turns, redacted messages/events, duration, waiting/resolution metadata |
+| `agent_configs` | Existing atomic per-owner conversation quota |
+| `execution_logs` | Bounded execution outcomes, limits, approval metadata and internal turn linkage |
+| `sandbox_approvals` | Exact pending request, fingerprint, owner, expiry and single-use state |
+| `sandbox_locks` | Distributed one-live-sandbox admission and fail-closed recovery state |
+| `monitor_streams` | Last200 per-user signed replay events and monotonic sequence/cutover |
+| `monitor_connections` | At most 20 shared WebSocket leases, four per user |
+| `security_events` | Expiring rate counters and seven-day signed metadata audit rows |
 
-Auth responses are not cached. The API limits actual POST body size to 16 KiB even for chunked requests and returns sanitized errors. Frontend/API headers prevent framing and MIME sniffing; React escapes profile strings. There are no user-controlled redirects, execution routes, or future data APIs.
+Indexes cover unique email, session/approval/log expiry, owner/time histories, active leases, unique owner/session/turn, and audit sequence queries. Reads paginate rather than load entire histories. Conversation context retains the most recent six completed turns, clipped per existing limits. UI lists and replay/dedup buffers are bounded. MongoDB's small connection pool starts empty and closes on graceful shutdown.
 
-## Rate limits and resources
+Standalone MongoDB has no cross-document transactions. An interruption can leave conservative quota counts, incomplete turns, a consumed approval without a final result, or a signed feed append without its audit-row insertion. Fenced leases prevent an old finalizer from releasing a newer execution. Failures do not restore consumed approvals, grant another owner access, or bypass readiness. See security/testing docs for fault-recovery evidence and residual risks.
 
-Atomic MongoDB counters survive backend restarts and work across workers. Defaults: 5 login attempts per normalized email and 30 per peer IP in 300 seconds, plus 10 registrations per IP per 300 seconds. Counters use HMAC identifiers rather than raw emails/IPs and expire automatically. Fixed windows can permit a burst across a boundary; this is not distributed DDoS protection. All attempts count, including successful ones, with a Retry-After response when blocked.
+## Live monitoring
 
-Do not enable trusted proxy headers blindly. The documented backend command disables them. Requests via the Next.js proxy share its peer IP and thus share the conservative IP budget; per-email limits still apply. A future public deployment needs explicit trusted proxy configuration and edge-level abuse controls. There is no Redis, Celery, refresh loop, or separate monitor. One native MongoDB process, a 256 MB storage cache, one backend worker, and one frontend process suit local development on 8 GB hardware. Browser tests use one worker.
+The API polls an authenticated owner's bounded MongoDB feed only while that socket is open. Signed events contain fixed metadata, not messages, code, credentials, tool arguments/results, system prompts, or private reasoning. Each delivery rechecks session revocation and the shared connection lease. The browser deduplicates ordered sequences, replies to heartbeats, refreshes REST state on reconnect, and uses bounded exponential backoff for transport failures. Auth failure/logout/known origin mismatch stops retries. Replay gaps trigger snapshot resynchronization; the API does not promise exactly-once delivery or indefinite retention.
 
-## Limits and future work
+## Deployment boundary
 
-Email validation establishes syntax, not ownership. Registration returns a generic duplicate-details message, but its status can still allow account-existence inference. No password reset, email verification, MFA, account administration, sandbox execution, or persistent future-phase data features are implemented. These require separately approved work. Local MongoDB must remain on loopback; production database credentials, TLS, backup policy, HTTPS, and deployment hardening are operator responsibilities.
+The Compose stack runs non-root app containers plus authenticated MongoDB 7 on private networks. Only the frontend is bound to loopback. The public-facing backend has **no Docker socket** and forces sandbox execution off. No remote orchestration API is introduced. A complete sandbox demonstration uses the native trusted-host backend with a separately validated Colima runtime and the same frontend/API/database contracts. Compose and native modes are different deployment choices, not weaker isolation fallbacks.
 
-## Dependency maintenance
-
-The frontend lockfile fixes its full dependency tree. The minimatch override selects version 11.0.1 or newer for GHSA-g3hv-75wg-m249; rerun lint and audit after updates. Python direct versions are pinned while transitive versions resolve during installation. Both ecosystems are audited during validation and CI. Tests use disposable local databases and ephemeral test signing keys, never production credentials.
-
-## Phase 3 agent engine
-
-See README.md for the complete agent API, limits, lifecycle, providers, tools, data flow, and security limitations. `app/agents/providers.py` owns external I/O and error normalization; `engine.py` compiles the bounded StateGraph; `tools.py` defines a closed text-only registry; `api.py` applies ownership/CSRF/rate checks, execution leases, quotas, and MongoDB persistence. Existing `current_identity`, `require_csrf`, `limit_attempts`, connection pooling, and protected layouts remain the security boundaries.
-
-`agent_sessions` and `agent_messages` use owner-prefixed indexes. A turn is persisted before provider I/O; events are persisted with the result, never raw chain-of-thought. Executions have no checkpointer service or external tracing. No paid service is selected automatically. A real Groq key and optional Ollama runtime are operator prerequisites for live checks; automated fixtures are explicitly isolated from the production entry point.
-
-## Phase 4 sandbox
-
-See [sandbox.md](sandbox.md) for the deterministic policy, approvals, limits, readiness gate, Docker lifecycle, isolated tests and explicit unverified security properties. The sandbox adapter is independent of authentication and safe text tools; unavailable infrastructure fails closed without preventing application startup.
+See [deployment.md](deployment.md), [security.md](security.md), and [testing.md](testing.md) for setup, enforcement details, validation, backup/recovery, and limitations. Historical phase documents describe their original snapshots; this document and Phase 7 docs describe the final integrated application.

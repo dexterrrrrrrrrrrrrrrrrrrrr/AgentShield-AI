@@ -1,0 +1,46 @@
+{
+  "method": "In-process FastAPI TestClient request roundtrips with real local MongoDB; 3 warmups then sequential samples per endpoint. Includes authentication, DB and serialization; excludes TCP/TLS/browser/network/model/container latency.",
+  "hardware": {
+    "system": "Linux",
+    "machine": "x86_64",
+    "logical_cpus": 5,
+    "python": "3.12.14",
+    "memory_bytes_visible_to_os": 35743748096
+  },
+  "workload": {
+    "users": 1,
+    "agent_sessions": 1,
+    "persisted_turns": 50,
+    "signed_audit_events": 200,
+    "concurrent_requests": 1
+  },
+  "commit": "abc1efb184e273ff51870503a91089d78268c3fb",
+  "working_tree_dirty": true,
+  "results": {
+    "session_page_20": {
+      "samples": 20,
+      "median_ms": 3.9,
+      "p95_ms": 4.748,
+      "max_ms": 4.908
+    },
+    "history_page_20": {
+      "samples": 20,
+      "median_ms": 5.042,
+      "p95_ms": 5.881,
+      "max_ms": 6.137
+    },
+    "audit_page_50": {
+      "samples": 20,
+      "median_ms": 7.086,
+      "p95_ms": 15.424,
+      "max_ms": 16.733
+    },
+    "analytics_summary": {
+      "samples": 20,
+      "median_ms": 8.739,
+      "p95_ms": 12.858,
+      "max_ms": 15.583
+    }
+  },
+  "limitations": "Cloud Linux measurements do not predict M2/8GB performance. Synthetic fixture records are isolated measurement data, never production analytics. No before/after speedup claimed."
+}

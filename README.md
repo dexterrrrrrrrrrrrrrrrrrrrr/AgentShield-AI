@@ -1,58 +1,80 @@
 # AgentShield AI
 
-Phase 6 adds security hardening to the existing application; see [the audit, threat model, protections and local validation](docs/phase6.md). Phase 5 provides authenticated real-time monitoring, structured security events, approval management, and stored analytics to the existing Next.js/FastAPI application. MongoDB accounts, LangGraph agents, and the fail-closed Docker sandbox from Phases 1–4 are preserved. All components are free; no hosted database, authentication provider, Redis, or paid monitoring service is required. See [Phase 5 architecture and setup](docs/phase5.md).
+A security-first AI agent playground with authenticated conversations, permission-checked tools, human approvals, isolated Python execution, live monitoring, and signed security audit history. Next.js/TypeScript/Tailwind, FastAPI/Python 3.12, MongoDB 7/PyMongo Async, LangGraph, Docker/Colima, and optional Groq/Ollama provide the existing architecture. No paid service, Redis, Celery, or hosted authentication/database is required.
 
-## Requirements
+The dashboard, Playground, Sandbox, Monitoring, Profile, and Settings use actual API state. New conversations select the server-enabled provider/model and a tool allowlist. Pending Python requests wait for an owner decision; **Continue after decision** finalizes the original turn from the stored result without running code again. Missing providers and unavailable sandbox runtimes report errors rather than produce fake responses.
 
-- Node.js 24, npm, and Python 3.12
-- MongoDB Community Edition 8.0
-- macOS Apple Silicon is supported. Native MongoDB is recommended on an 8 GB MacBook to avoid a Docker VM's memory overhead.
+Read [Phase 7 audit](docs/phase7-audit.md), [architecture](docs/architecture.md), [deployment](docs/deployment.md), [security](docs/security.md), [testing](docs/testing.md), and [Phase 7 validation report](docs/phase7.md).
 
-## 1. Install and start local MongoDB
+## Choose a local launch mode
 
-On macOS, install the official Community Edition formula:
+| Mode | Available functionality | Sandbox / Ollama |
+| --- | --- | --- |
+| Full native-host development | All application flows; frontend/API on the host, MongoDB 7 local or in Colima | Optional real sandbox after Colima validation; optional native loopback Ollama |
+| Docker Compose | Non-root frontend/backend, authenticated MongoDB 7, chat through configured Groq, monitoring/audit/approvals API | Sandbox is explicitly disabled; no Docker socket in backend. Native Ollama is not made reachable by relaxing SSRF rules. |
 
-```sh
-brew tap mongodb/brew
-brew install mongodb-community@8.0
-mkdir -p "$HOME/.local/share/agentshield/mongodb"
-mongod --dbpath "$HOME/.local/share/agentshield/mongodb" --bind_ip 127.0.0.1 --port 27017 --wiredTigerCacheSizeGB 0.25
-```
+Compose is a local deployment with explicit HTTP development cookies. Public production deployment additionally requires HTTPS/WSS, Secure production cookies, private database networking/credentials, trusted proxy/Host/origin configuration, backups, and operator hardening. It is not certified malicious multi-tenant isolation.
 
-Keep that terminal running; Ctrl-C shuts MongoDB down gracefully. Do not also start a Homebrew MongoDB service on the same port. The 256 MB WiredTiger cache leaves memory for the application. Verify from another terminal:
+## Fast local Compose launch
 
-```sh
-mongosh mongodb://127.0.0.1:27017 --quiet --eval 'db.runCommand({ping:1})'
-```
-
-Alternatively, if Docker is already available, run `docker compose up -d mongo` from the repository root. The included service publishes only loopback, has a 512 MB memory cap, and retains data in a named volume. Stop it with `docker compose stop mongo`. Do not use `down -v` unless you intend to erase its database. Choose one MongoDB startup method.
-
-Local MongoDB has no database password and must stay bound to loopback. For remote deployments use MongoDB authentication, TLS, private networking, and a credential-bearing URI stored securely outside Git.
-
-## 2. Configure and start the backend
+Requirements: Git, Python3, Docker Engine/Compose; on Apple Silicon use free Colima. Allow time/disk space for dependency/image builds; on an 8 GB Mac use one backend worker and close large local models while building.
 
 From the repository root:
 
 ```sh
-python -m venv backend/.venv
-backend/.venv/bin/python -m pip install -r backend/requirements-dev.txt
-cp .env.example backend/.env
-backend/.venv/bin/python - <<'PYGEN'
-from pathlib import Path
-import secrets
-p = Path("backend/.env")
-p.write_text(p.read_text().replace("JWT_SECRET=\n", "JWT_SECRET=" + secrets.token_urlsafe(48) + "\n"))
-p.chmod(0o600)
-PYGEN
-cd backend
-.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-proxy-headers --ws websockets --ws-max-size 1024 --ws-max-queue 8
+python3 scripts/init-compose-env.py
+docker compose --env-file .env.compose up --build -d --wait
 ```
 
-Do not overwrite an existing populated `.env`; preserve its signing key and settings. `pydantic-settings` loads `backend/.env` regardless of the command's working directory. Process environment variables override the file. Startup requires a valid signing key, MongoDB ping, and successful index creation; it fails closed otherwise. Ctrl-C closes the async MongoDB client gracefully.
+The helper creates fresh generated keys/passwords in an ignored 0600 file and refuses to overwrite an existing one. It does not alter `backend/.env` or previous keys. Visit `http://localhost:3000`, register, and sign in. Add a free-tier `GROQ_API_KEY` securely to `.env.compose` and recreate the backend if desired. No model request occurs until you submit a task or continue an approved turn.
 
-Database defaults to `agentshield_ai`. Authentication uses `users`, `sessions`, and `security_events` (expiring rate counters and structured monitoring events). Agents use `agent_sessions`, `agent_messages`, and `agent_configs`. Sandbox persistence uses `execution_logs`, `sandbox_approvals`, and `sandbox_locks`; live monitoring adds a bounded per-user `monitor_streams` feed. Startup creates the required indexes.
+```sh
+docker compose --env-file .env.compose ps
+docker compose --env-file .env.compose down
+```
 
-## 3. Start the frontend
+Do not use `down -v` unless intentionally deleting that stack's data. The `agentshield-ai-v7` default project and MongoDB 7 volume are **new**: never attach an old MongoDB 8 volume or downgrade its data files. Existing MongoDB 8 data is left untouched. Compose exposes only the loopback frontend; backend/MongoDB ports remain internal. See [deployment details](docs/deployment.md) for optional native database access, HTTPS, credential lifecycle, backup/restore, health checks, and troubleshooting. Do not print/share resolved Compose configuration because it contains credentials.
+
+## Full native-host setup (including optional sandbox)
+
+Requirements: Node.js 24/npm, Python 3.12, MongoDB Community 7, and Colima/Docker for sandbox execution. Keep MongoDB on loopback. One MongoDB startup option is the native Homebrew package:
+
+```sh
+brew tap mongodb/brew
+brew install mongodb-community@7.0
+mkdir -p "$HOME/.local/share/agentshield/mongodb7"
+mongod --dbpath "$HOME/.local/share/agentshield/mongodb7" --bind_ip 127.0.0.1 --port 27017 --wiredTigerCacheSizeGB 0.25
+```
+
+Use a **new** MongoDB 7 data directory. Choose one database startup method; do not start native and container databases on the same port. If using the authenticated Compose MongoDB for native development, use the documented `compose.native.yaml` override and its app credentials instead; never expose it publicly.
+
+From another terminal at the repository root:
+
+```sh
+python3.12 -m venv backend/.venv
+backend/.venv/bin/python -m pip install -r backend/requirements-dev.txt
+```
+
+Create native configuration **only for a fresh database and absent env file** (the exclusive write refuses to replace existing keys):
+
+```sh
+backend/.venv/bin/python - <<'PYENV'
+import os, secrets
+from pathlib import Path
+text = Path(".env.example").read_text()
+text = text.replace("JWT_SECRET=\n", "JWT_SECRET=" + secrets.token_urlsafe(48) + "\n")
+text = text.replace("AUDIT_SIGNING_KEY=\n", "AUDIT_SIGNING_KEY=" + secrets.token_urlsafe(48) + "\n")
+fd = os.open("backend/.env", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "w") as target:
+    target.write(text)
+PYENV
+```
+
+For an existing database, retain its original JWT/audit keys and credentials. Never create replacement keys casually. Configure the database URI, `CORS_ORIGINS=http://localhost:3000` and `TRUSTED_HOSTS=localhost,127.0.0.1`. The app loads that file regardless of working directory. Do not replace existing keys: changing the effective audit key invalidates signatures. See [key migration guidance](docs/security.md).
+
+```sh
+bash scripts/run-backend.sh
+```
 
 In another terminal:
 
@@ -62,52 +84,44 @@ npm ci
 npm run dev
 ```
 
-Open the frontend on port 3000. The server proxies browser requests under `/api` to FastAPI, keeping auth cookies on the same origin. Health status also uses this proxy by default. Optional `frontend/.env.local` settings:
+The frontend proxies HTTP and WebSocket requests under `/api` to the backend. `API_INTERNAL_URL` is server-only and defaults to `http://127.0.0.1:8000`. Production build rewrites bind this target at build time; rebuild after changing it. Never put keys in `NEXT_PUBLIC_*`, browser storage, source, or chat.
 
-```dotenv
-API_INTERNAL_URL=http://127.0.0.1:8000
-# Optional browser-reachable health API override, never a credential:
-NEXT_PUBLIC_API_URL=
+### Providers
+
+Groq is optional and primary. Set a free-tier `GROQ_API_KEY` on the backend; `GROQ_MODEL` defaults to `llama-3.1-8b-instant`. Model support/free quotas change; the app checks availability, handles failures, and never purchases credit or switches providers automatically. Keep billing disabled to maintain a zero-cost budget. Automated tests use explicitly identified mocks; they do not prove live inference.
+
+Ollama is optional and disabled by default. On the native host, explicitly install/start it and choose a lightweight model suitable for 8 GB RAM, e.g. `qwen2.5:1.5b`. `ollama pull qwen2.5:1.5b` is an operator-initiated download, never an application action. Set `OLLAMA_ENABLED=true`, `OLLAMA_MODEL=qwen2.5:1.5b`, and the loopback URL. Its tool support must be checked locally; errors do not grant other capabilities. Prefer Groq when local memory is constrained.
+
+### Real sandbox validation
+
+The sandbox is disabled by default. Install Colima/Docker, use the Colima context, and run the unchanged operator validator:
+
+```sh
+bash scripts/validate-phase4-colima.sh
 ```
 
-`API_INTERNAL_URL` is server-only. Set it before building; Next.js rewrites are generated at build time. If the frontend port or public origin changes, set the backend's `CORS_ORIGINS` to that exact origin. Do not mix `localhost` and `127.0.0.1` in the browser. The default configuration needs no frontend env file.
+Do not enable submitted-code execution if readiness fails. Inspect the actual Docker context endpoint and set the native backend's `SANDBOX_DOCKER_URL` to that Unix socket; preserve the reviewed digest and all limits. Only after real checks pass set `SANDBOX_ENABLED=true` and retain `SANDBOX_POLICY=approval` for demonstrations. No socket is mounted into execution containers or the Compose public backend. Containers are not immunity against kernel/runtime escape vulnerabilities. See [sandbox details](docs/sandbox.md).
 
-For a production frontend, use `npm run build` followed by `npm start`. Production deployments must use HTTPS and backend `APP_ENV=production` with HTTPS `CORS_ORIGINS`. That enables Secure, host-only `__Host-` cookies. Keep the backend behind the same-origin frontend/reverse proxy. These development commands are not an Internet deployment configuration.
+The user's earlier Colima 12/12 result is separate from cloud/CI evidence. Ten real-sandbox pytest cases remain opt-in; skipped cases are never counted as passes.
 
-## Account workflow
+## User workflow
 
-1. Visit `/register`; enter full name, email, password, and confirmation. Passwords must be 12–128 characters and cannot consist only of whitespace. Long, unique passphrases are recommended.
-2. Registration normalizes email case and whitespace and stores only an Argon2id hash. It does not automatically authenticate you.
-3. Sign in at `/login`. Success opens the protected dashboard. Invalid passwords and unknown users return the same error.
-4. Open Profile to view full name, email, creation date (UTC), and authentication status.
-5. Sign out to revoke that session immediately. Other sessions remain valid. Sessions expire after 15 minutes by default; sign in again. There are no refresh tokens or localStorage tokens.
+1. Register a full name/email/password confirmation; passwords require 12–128 characters and cannot be entirely whitespace. Sign in to obtain the HttpOnly session cookie.
+2. Open Playground, choose an enabled provider/model and allowed tools, create/send a task, and restore saved conversation history.
+3. Review tool events and failures. A sensitive Python tool request pauses the original turn; open its exact request in Sandbox/Monitoring.
+4. Approve or reject as the owner. Authorization, fingerprint, expiry, quotas, and real readiness are rechecked; duplicate/foreign decisions fail.
+5. Return to the original conversation and select **Continue after decision**. Resolution is single-use, uses the stored result, and has no tool permissions. A new tool task requires a new user turn.
+6. Monitor live activity, signed security events, pending decisions, real stored analytics, and paginated audit history. Profile shows account/session information; Settings shows real provider/readiness configuration.
+7. Sign out to revoke the session and stop private monitoring. Expired sessions require login again; database/network outages remain recoverable errors.
 
-The original overview, API health/retry behavior, profile, and responsive layout remain. Agent Playground is at `/playground`, Sandbox at `/sandbox`, and both Execution Logs and Security Monitoring open `/monitoring`. Settings remains a placeholder. Sandbox execution stays disabled by default and requires the existing verified Docker restrictions and policy. There is no unrestricted shell or host execution.
+## Verification
 
-## API
-
-| Method | Endpoint             | Purpose                                                           |
-| ------ | -------------------- | ----------------------------------------------------------------- |
-| GET    | `/health`            | Public liveness and version                                       |
-| GET    | `/ready`             | Live database readiness (503 on failure)                          |
-| GET    | `/api/auth/csrf`     | Issue a signed, session-bound CSRF token and HttpOnly CSRF cookie |
-| POST   | `/api/auth/register` | Validate and register an account                                  |
-| POST   | `/api/auth/login`    | Create a tracked session and set HttpOnly JWT cookie              |
-| GET    | `/api/auth/me`       | Return the authenticated user's safe profile                      |
-| POST   | `/api/auth/logout`   | Revoke the current session and clear cookies                      |
-
-State-changing auth requests require an allowed `Origin`, the CSRF cookie, and the token from `/api/auth/csrf` in `X-CSRF-Token`. Fetch a new token after login. The frontend does this automatically. Auth responses use `Cache-Control: no-store`. API documentation is at backend `/docs`.
-
-## Tests and dependency audits
-
-Tests require a live **credential-free local MongoDB**, never production credentials. They create unique `agentshield_test_*` or `agentshield_e2e_*` databases and remove them after each completed run. They fail if MongoDB is unavailable; there is no mock fallback. A forcibly interrupted run may leave a disposable test database. Both normal and browser tests refuse remote/credential-bearing test URIs.
+With a credential-free **test** MongoDB 7 on loopback (never production credentials):
 
 ```sh
 cd backend
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q --tb=short
 .venv/bin/python -m pip check
-.venv/bin/python -m pytest -q
-.venv/bin/python -m pip install pip-audit==2.10.1
-.venv/bin/python -m pip_audit -r requirements-dev.txt
 ```
 
 ```sh
@@ -115,108 +129,20 @@ cd frontend
 npm run lint
 npm run typecheck
 npm run build
-npm audit --audit-level=moderate
 npx playwright install chromium
 npm run test:e2e
 ```
 
-The Playwright configuration builds and starts the production frontend on 3001 and a test backend on 8001, generates an ephemeral signing key, and shuts down both processes. It uses one browser worker to keep memory modest. If Chromium is already installed, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to its executable path instead of downloading another browser. Set `BACKEND_PYTHON` if your backend Python executable differs from `../backend/.venv/bin/python`. `TEST_MONGODB_URI` may select another credential-free loopback MongoDB port. Browser-test ports 3001 and 8001 must be free. The browser test build points to its test API on 8001; run `npm run build` again before using `npm start` for normal development on API port 8000.
+Tests create unique disposable databases and ephemeral signing keys. The existing CI MongoDB 7/Ubuntu24.04 startup/readiness/diagnostics fix is retained. Browser tests build the production frontend and use real local MongoDB/WebSockets with explicit test-only model/container adapters. The normal app and production images never enable those fixtures. Use `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` for an installed browser and `BACKEND_PYTHON` for another Python path. Ports 3001/8001 must be free; rerun the normal frontend build after browser tests before `npm start`.
 
-Backend tests cover registration, duplicate races, input validation, password hashing, generic login errors, JWT claims/signatures/expiration, session expiration and ownership, logout revocation, cross-user isolation, rate limits, CSRF, body limits, indexes, secure production cookies, and database failures. Browser tests cover account forms, password visibility, route protection, profile, logout, separate users, API errors, and Phase 1 dashboard regressions. GitHub Actions runs both suites with MongoDB services and dependency audits.
-
-## Security and resource decisions
-
-See [architecture and security](docs/architecture.md). The backend remains the authorization boundary; frontend redirects are an additional UI safeguard. Email syntax is validated, but email ownership verification, password reset, MFA, refresh tokens, and production deployment are outside this phase. No paid services, Redis, Celery, or heavy monitoring stack is required. Phase 5 monitoring does not change sandbox restrictions. Phase 6 is outside this implementation.
-
-## Phase 3: provider configuration
-
-Add `GROQ_API_KEY` to the backend process environment or the ignored `backend/.env`, then restart the backend. Never paste a real key into source, chat, browser storage, frontend variables, screenshots, or test fixtures. Groq is the primary provider; no key is needed to start the application or run automated tests. In a restricted cloud environment, allow HTTPS to `api.groq.com` through environment settings. No environment is published automatically by this code.
-
-`GROQ_MODEL` defaults to `llama-3.1-8b-instant`. Availability is checked using the official Groq SDK before each completion. Models change over time; configure an available Llama model with tool support in your Groq account. The playground offers only the server-configured model for each provider. The application does not select a paid provider, purchase credits, switch providers, or retry provider calls automatically. **Use a free-tier account without billing enabled** to maintain a ₹0 budget; model availability checks and completions consume provider quota. A free API is not unlimited. Authentication errors, unavailable models, timeouts, quota errors, and outages return safe, actionable errors.
-
-### Optional local Ollama
-
-Ollama is disabled by default. To opt in, install Ollama separately and explicitly download a small model such as `qwen2.5:1.5b` (roughly 1 GB quantized; allow additional runtime memory). Run `ollama serve` and, only if you choose to download it, `ollama pull qwen2.5:1.5b`. Then set `OLLAMA_ENABLED=true` and `OLLAMA_MODEL=qwen2.5:1.5b`. `OLLAMA_URL` must be a loopback HTTP origin (default port 11434). Never point it at a remote service. The app checks installed models but **never downloads models**. Model tool support is provider/model dependent; unsupported requests produce errors rather than unsafe fallbacks. No real Ollama runtime is required by tests.
-
-For an 8 GB M2, prefer Groq to avoid local-model RAM usage. If using Ollama, run only one small model, keep the default 4096-token context, and close it when finished. The app requests a one-minute model keep-alive. Native macOS/M2 runtime performance must be evaluated locally; cloud validation runs on Linux.
-
-## Agent lifecycle and tools
-
-Open Agent Playground after login. Choose the provider/model, enter a task, and send it. A conversation locks its provider/model; choose **New conversation** to use another selection. Saved conversations reload from MongoDB, with paginated session lists. Up to 50 sessions per user and 50 turns per session are permitted. Clear conversation deletes the selected session and its messages. Retry is an explicit new turn and may consume provider quota.
-
-LangGraph runs `START → model → permission-checked tools → model → END`. Observable events describe model requests, tool requests, tool responses, denials, completion, and failure. They are not private chain-of-thought, and raw provider reasoning fields/system prompts are never returned. Automatic LangSmith tracing is disabled for executions; no tracing account or hosted LangGraph service is used.
-
-The registry allows only:
-
-- `calculator`: AST-interpreted arithmetic (`+ - * /` and parentheses), finite numbers bounded to ±10¹²; no eval, function calls, exponentiation, or imports.
-- `summarize_text`: local extractive summary, taking the first three sentences (not an extra LLM call).
-- `format_json`: parse and pretty-print JSON; reject invalid JSON and non-finite constants.
-
-Each tool accepts only a bounded `text` string. Session allowlists can restrict these tools but cannot add tools. Unknown/disallowed names or malformed inputs fail closed. All tool requests/responses are recorded as redacted workflow events. The Phase 4 `python_sandbox` tool enters through this same allowlist and an independent sandbox policy/approval service; it accepts bounded code instead of a `text` argument. It never runs Python on the host.
-
-Defaults: 4 model iterations, 3 tool calls, 15 seconds per provider operation and 45 seconds total execution, 4000 input characters, 1024 output tokens, and the most recent 6 completed turns (each context message clipped to 2000 characters). Two active executions per backend process are admitted; the database lease prevents concurrent turns/deletion within a running conversation. An expired lease can be recovered after 120 seconds. There are no background workers, Redis, or Celery. Phase 5 reads the bounded MongoDB event feed only while monitoring WebSockets are connected, once per second by default.
-
-## Agent API and persistence
-
-All `/api/agent` endpoints require the existing JWT/session authentication. Writes require the existing Origin and CSRF checks. Database queries always include the authenticated owner; foreign/missing sessions return the same 404.
-
-| Method | Path                                                  | Purpose                                                     |
-| ------ | ----------------------------------------------------- | ----------------------------------------------------------- |
-| GET    | `/api/agent/providers`                                | Enabled provider/model metadata, no keys                    |
-| POST   | `/api/agent/sessions`                                 | Create a conversation with provider/model/tool allowlist    |
-| GET    | `/api/agent/sessions?offset=0&limit=20`               | Paginated owned sessions                                    |
-| GET    | `/api/agent/sessions/{id}/messages?offset=0&limit=20` | Owned conversation history                                  |
-| POST   | `/api/agent/sessions/{id}/messages`                   | Persist input, run the bounded graph, persist result/events |
-| GET    | `/api/agent/sessions/{id}/events?offset=0&limit=20`   | Paginated execution statuses and events                     |
-| DELETE | `/api/agent/sessions/{id}`                            | Clear/delete owned conversation (409 while running)         |
-
-Collections: `agent_sessions` holds owner, provider/model, allowlist, UTC timestamps, execution lease/status, and turn count; `agent_messages` holds owned user/assistant turn pairs, status, timestamps, and events; `agent_configs` holds the owner's atomic session quota. Owner/time indexes and a unique owner/session/turn index support bounded queries. Sandbox execution records are stored in `execution_logs`; see [sandbox persistence](docs/sandbox.md). No API keys, system prompts, or raw provider exception bodies are stored in conversation documents.
-
-Agent requests are limited to 10 per user per 300-second rate window by default, using existing MongoDB counters; session creation has its own limit. Auth and agent request bodies are capped at 16 KiB. Known key patterns, configured Groq/JWT keys, and common credential assignments are redacted before persistence and in tool events. Redaction is best effort, not a data-loss-prevention guarantee: do not send confidential data. Groq receives the task, bounded conversation history, and necessary tool results. Tool/model outputs are untrusted plain text and are never rendered as HTML or executed. A malicious model can still produce incorrect or inappropriate text; this is not a complete prompt-injection defense.
-
-Multi-document writes use standalone MongoDB without transactions. A database/process interruption can leave an incomplete turn or conservative quota count. The UI labels incomplete executions; retry creates a new turn. Failures never confer another user's access. Back up the local database and do not use this development configuration as a production deployment.
-
-## Phase 3 validation
-
-Run the backend and frontend commands above. Provider tests use the official Groq SDK with mocked HTTP responses; graph/API tests use injected providers and **real local MongoDB**. The test suite reuses a disposable database's collection files within one run and clears documents between tests, then drops the database at the end to avoid delayed WiredTiger file cleanup exhausting descriptors. Browser tests explicitly launch `scripts.browser_test_app:make_app` in an isolated test database; the normal `app.main:app` entry point never enables a fake provider. Browser tests cover a tool run, persisted/reloaded history, loading indicators, errors/retry, clearing, route protection, mobile layout, and auth regressions.
-
-A real Groq smoke test is separate: after securely configuring a free-tier key and network access, sign in and send one short task with Groq in the playground. A mocked provider test is not evidence of a real Groq request. Ollama availability/model behavior must also be tested separately on a machine where it is installed. The separate Phase 4 sandbox and Phase 5 monitoring are described below.
-
-## Phase 4: fail-closed Python sandbox
-
-The `/sandbox` page and `python_sandbox` agent tool use an independent policy service, expiring single-use approvals, MongoDB execution history, and a Docker SDK adapter. Real execution is **disabled by default**. Existing auth, dashboards, and safe text tools require no working sandbox daemon.
-
-Read [sandbox architecture, security, APIs and Colima/M2 validation](docs/sandbox.md) before enabling execution. The user reports **12/12 real Docker checks passed** on macOS ARM64/Colima at commit `c9a6acd`. This cloud environment cannot revalidate that Mac runtime and its own sandbox runtime lacks effective cgroup controls. Cloud unit/API/browser tests use explicitly injected Docker mocks with real MongoDB and existing authentication; these do not establish real container isolation. No managed daemon configuration is changed.
-
-Start the project using the existing MongoDB, backend and frontend commands above. New settings are in `.env.example`; keep `SANDBOX_ENABLED=false` until the separate readiness and real-integration procedure succeeds. The reviewed runtime digest must be pulled by an operator; HTTP requests never pull or select images. Docker containers are not a complete security boundary against malicious code. Monitoring never relaxes readiness or execution restrictions.
-
-### Validate Phase 4 on your own Colima runtime
-
-With Colima already running, Python 3.12 installed, and the local backend stopped, run from this repository root:
+Additional reproducible checks:
 
 ```sh
-git pull --ff-only origin main
-bash scripts/validate-phase4-colima.sh
+backend/.venv/bin/python scripts/measure-local.py --mongodb-uri mongodb://127.0.0.1:27017
+backend/.venv/bin/python scripts/validate-mongo-recovery.py
+backend/.venv/bin/python scripts/smoke-compose.py --base-url http://localhost:3000
+# Optional real browser against an isolated Compose stack (frontend npm ci + Chromium required):
+COMPOSE_BASE_URL=http://localhost:3000 node scripts/browser-compose.mjs
 ```
 
-This checks real effective cgroup limits before any container test program, then verifies actual resource enforcement, restrictions, timeouts, output and cleanup. It does not use MongoDB or application credentials, change the daemon, or enable real execution. Return the generated `phase4-validation-*.json` report for review. See [detailed instructions and exit codes](docs/sandbox.md#automated-colima-validation-recommended). Mac validation has not been performed in the cloud.
-
-The Colima validator now handles Docker's correctly cased `CpuCfsQuota` field and uses effective in-container limits rather than optional daemon capability booleans to authorize execution. See [the detection fix](docs/sandbox.md#colima-cgroup-v2-detection-correction). Re-run the same validation command after pulling the fix; no resource restriction should be removed.
-
-
-## Phase 5: live monitoring and analytics
-
-Open **Security Monitoring** or **Execution Logs** after login to reach `/monitoring`. Use a second tab for a Playground task: the live timeline shows model status, tool requests/results, policy decisions, and completion durations. It contains metadata only, never private reasoning, prompts, code, credentials, or tool payloads. The dashboard shows real stored totals, active agents, sandbox outcomes, pending approvals, approval statistics, and decision history. Empty accounts show zeros. Counts reflect current retained records rather than all-time totals.
-
-Review exact pending sandbox requests before approving or rejecting them. Both actions require the existing authenticated owner and CSRF protections and atomically consume an expiring, content-bound request. Replays, foreign decisions, and duplicate actions fail. Approval still requires the unchanged real sandbox readiness/policy checks; safe tools and monitoring work when Docker is unavailable.
-
-WebSockets reuse the same-origin HttpOnly session cookie and enforce exact Origin checks, user-specific feeds, revocation checks, bounded replay, heartbeat/pong, slow-client timeouts, and reconnect cursors. Install the updated backend requirements (including the explicit `websockets` dependency) and use the backend startup command above. No extra services are necessary. Optional `MONITOR_*` settings are in `.env.example`. A reverse proxy must forward WebSocket upgrades and use HTTPS/WSS for production.
-
-See [docs/phase5.md](docs/phase5.md) for the event protocol, APIs, indexes, retention, analytics definitions, security model, local setup, and tests. The normal Pytest and Playwright commands above include Phase 5 tests and Phases 1–4 regressions. Browser tests exercise real WebSockets through a production Next.js build and real local MongoDB with mocked provider/container adapters. Real Docker validation remains a separate local command. No Phase 6 work is included.
-
-
-## Phase 6: security hardening
-
-See [docs/phase6.md](docs/phase6.md) for the findings, enforced protections, residual risks, audit-key migration, and test results. The update adds whole-batch tool validation, live tool/sandbox authorization checks, bounded provider reads and fixed network destinations, request/hash admission limits, shared WebSocket leases, signed audit records, and stronger redaction including historical responses. Existing sandbox restrictions remain unchanged. Model instructions do not grant tool permissions, and no claim of complete prompt-injection prevention is made.
-
-Use `bash scripts/run-backend.sh` from the repository root for bounded local transport settings. Optionally set a separate stable `AUDIT_SIGNING_KEY` **before the first Phase 6 start**; otherwise signatures derive from `JWT_SECRET`, so later JWT-key rotation affects audit verification. Preserve existing secrets/data. Legacy unsigned audit events remain visible and are labeled; signatures are not an external tamper-proof archive. No Phase 7 work is included.
+See [testing.md](docs/testing.md) for database requirements, real versus mocked boundaries, dependency audits, isolated outage/recovery behavior, and exact sandbox commands. [phase7.md](docs/phase7.md) records measured results and unverified properties; no production-readiness claim is based on a skipped test.

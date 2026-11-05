@@ -1,0 +1,10 @@
+{
+  "status": "PASS",
+  "integration": "Real isolated MongoDB container stop/start with in-process FastAPI and live database authentication",
+  "outage_readiness_http": 503,
+  "outage_profile_http": 503,
+  "restored_profile_http": 200,
+  "session_preserved": true,
+  "recovery_seconds": 0.817,
+  "limitations": "No live provider request or untrusted sandbox execution. Does not stop any existing MongoDB service or use production credentials."
+}

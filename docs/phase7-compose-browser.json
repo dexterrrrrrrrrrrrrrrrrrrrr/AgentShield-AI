@@ -1,0 +1,11 @@
+{
+  "status": "PASS",
+  "integration": "Real browser against built Compose frontend and normal backend/MongoDB; no mocked providers or container adapters",
+  "registration_login_dashboard_logout": "PASS",
+  "protected_route_after_logout": "PASS",
+  "real_websocket": "PASS",
+  "missing_provider_and_history": "PASS: real setup failure and persisted history, without provider traffic",
+  "live_inference": "SKIPPED: no configured model is invoked by this check",
+  "real_sandbox_execution": "SKIPPED: intentionally disabled in the public Compose backend",
+  "limitations": "Creates a disposable account in the selected isolated stack; no public TLS/Mac/resource-isolation claim"
+}

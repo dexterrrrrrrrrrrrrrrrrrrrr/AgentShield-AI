@@ -1,0 +1,92 @@
+{
+  "services": {
+    "frontend": {
+      "user": "10001:10001",
+      "readonly": true,
+      "privileged": false,
+      "cap_drop": [
+        "ALL"
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "health": "healthy",
+      "ports": {
+        "3000/tcp": [
+          {
+            "HostIp": "127.0.0.1",
+            "HostPort": "3002"
+          }
+        ]
+      },
+      "mounts": [],
+      "image": "sha256:3b59a5a55309c0b8bf1760d51d21007f9cf6b276e64158f370e34c4e364261f6",
+      "memory_requested": 536870912,
+      "cpus_requested": 1000000000,
+      "pids_requested": 128
+    },
+    "backend": {
+      "user": "10001:10001",
+      "readonly": true,
+      "privileged": false,
+      "cap_drop": [
+        "ALL"
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "health": "healthy",
+      "ports": {
+        "8000/tcp": null
+      },
+      "mounts": [],
+      "image": "sha256:efb08a78b95fd5e1d620380be93771e3cd9dff1d4de123474f4723820195f9de",
+      "memory_requested": 536870912,
+      "cpus_requested": 1000000000,
+      "pids_requested": 128
+    },
+    "mongo": {
+      "user": "999:999",
+      "readonly": false,
+      "privileged": false,
+      "cap_drop": [
+        "ALL"
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "health": "healthy",
+      "ports": {
+        "27017/tcp": null
+      },
+      "mounts": [
+        {
+          "type": "volume",
+          "destination": "/data/configdb"
+        },
+        {
+          "type": "volume",
+          "destination": "/data/db"
+        },
+        {
+          "type": "bind",
+          "destination": "/docker-entrypoint-initdb.d/10-app-user.js"
+        }
+      ],
+      "image": "sha256:bf46c3fd4f186a3569a6c8d180ee6f55e46cc81e98c0cadaee2f56718c84979f",
+      "memory_requested": 805306368,
+      "cpus_requested": 1000000000,
+      "pids_requested": 256
+    }
+  },
+  "effective_cgroup_limits": "NOT VERIFIED: managed Docker reports cgroup driver none",
+  "sandbox_runtime": "SKIPPED: no submitted-code isolation validation in this runtime",
+  "limitations": "Local Linux demonstration with ephemeral configuration. No public HTTPS, live inference, Mac hardware, or sandbox escape-immunity claim.",
+  "database_app_roles": [
+    {
+      "role": "readWrite",
+      "db": "agentshield_ai"
+    }
+  ],
+  "status": "PASS: built service health and configured security boundaries verified"
+}
