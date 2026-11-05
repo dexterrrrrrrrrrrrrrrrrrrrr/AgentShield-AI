@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { LogoutButton, useUser } from "./session";
 import { useCallback, useEffect, useState } from "react";
+import { monitoringApi } from "@/lib/monitor-client";
+import { agentApi } from "@/lib/agent-client";
 
 const sections = [
   "Overview",
@@ -14,23 +16,37 @@ const sections = [
   "Settings",
 ] as const;
 type Section = (typeof sections)[number];
+const routes: Record<Section, string> = {
+  Overview: "/",
+  "Agent Playground": "/playground",
+  Sandbox: "/sandbox",
+  "Execution Logs": "/monitoring",
+  "Security Monitoring": "/monitoring",
+  Settings: "/settings",
+};
 type Connection = "checking" | "connected" | "unavailable";
 const descriptions: Record<Section, string> = {
   Overview: "Your command center for safer agent development.",
-  "Agent Playground":
-    "A future workspace for designing and evaluating AI agents.",
-  Sandbox: "A future isolated environment for controlled agent execution.",
-  "Execution Logs":
-    "Agent execution history will appear here when execution is available.",
+  "Agent Playground": "Conversations with bounded, permission-checked tools.",
+  Sandbox: "Isolated Python execution with independent security policies.",
+  "Execution Logs": "Your stored execution history and live activity.",
   "Security Monitoring":
-    "Security events and policy insights will appear here in a future phase.",
-  Settings: "Workspace configuration will be available in a future phase.",
+    "Policy decisions, signed audit events, and human approvals.",
+  Settings: "Server provider status and per-conversation tool configuration.",
 };
 
 export default function Dashboard() {
   const user = useUser();
   const router = useRouter();
-  const [active, setActive] = useState<Section>("Overview");
+  const active: Section = "Overview";
+  const [overview, setOverview] = useState<{
+    agent_executions: { total: number };
+    active_agents: unknown[];
+    approvals: { pending: number };
+    blocked_tool_requests: number;
+  } | null>(null);
+  const [providerReady, setProviderReady] = useState<boolean | null>(null);
+  const [overviewError, setOverviewError] = useState("");
   const [connection, setConnection] = useState<Connection>("checking");
   const [attempt, setAttempt] = useState(0);
   const retry = useCallback(() => setAttempt((value) => value + 1), []);
@@ -64,10 +80,37 @@ export default function Dashboard() {
       }
     }
     void check();
+
     return () => {
       disposed = true;
       controller.abort();
       clearTimeout(timeout);
+    };
+  }, [attempt]);
+
+  useEffect(() => {
+    let live = true;
+    Promise.all([monitoringApi("/monitor/summary"), agentApi("/providers")])
+      .then(([summary, metadata]) => {
+        if (live) {
+          setOverview(summary);
+          setProviderReady(
+            metadata.providers.some(
+              (p: { enabled: boolean; configured: boolean }) =>
+                p.enabled && p.configured,
+            ),
+          );
+          setOverviewError("");
+        }
+      })
+      .catch((e) => {
+        if (live)
+          setOverviewError(
+            e instanceof Error ? e.message : "Unable to load workspace state",
+          );
+      });
+    return () => {
+      live = false;
     };
   }, [attempt]);
 
@@ -96,22 +139,7 @@ export default function Dashboard() {
           {sections.map((section, index) => (
             <button
               key={section}
-              onClick={() =>
-                [
-                  "Agent Playground",
-                  "Sandbox",
-                  "Security Monitoring",
-                  "Execution Logs",
-                ].includes(section)
-                  ? router.push(
-                      section === "Sandbox"
-                        ? "/sandbox"
-                        : section === "Agent Playground"
-                          ? "/playground"
-                          : "/monitoring",
-                    )
-                  : setActive(section)
-              }
+              onClick={() => router.push(routes[section])}
               aria-current={active === section ? "page" : undefined}
               className={`flex items-center gap-3 rounded-lg px-4 py-3 text-left text-sm transition-colors ${active === section ? "bg-teal-400/10 text-teal-300" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}
             >
@@ -123,9 +151,9 @@ export default function Dashboard() {
           ))}
         </nav>
         <div className="mt-8 rounded-xl border border-slate-800 p-4 lg:absolute lg:right-5 lg:bottom-6 lg:left-5">
-          <p className="text-sm font-medium">Foundation release</p>
+          <p className="text-sm font-medium">Security workspace</p>
           <p className="mt-2 text-xs leading-5 text-slate-400">
-            Phase 5 · Development workspace
+            Policy-enforced local deployment
           </p>
         </div>
       </aside>
@@ -144,7 +172,7 @@ export default function Dashboard() {
             </Link>
             <LogoutButton />
             <span className="rounded-full border border-teal-800 bg-teal-950/50 px-3 py-1 text-xs text-teal-300">
-              Phase 5
+              Local workspace
             </span>
           </div>
         </header>
@@ -184,117 +212,100 @@ export default function Dashboard() {
               Refresh status
             </button>
           </section>
-          {active === "Overview" ? (
-            <>
-              <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                {[
-                  [
-                    "Agents",
-                    "Playground ready",
-                    "Configure a provider to start",
-                  ],
-                  [
-                    "Sandbox",
-                    "Policy-gated",
-                    "Readiness required before execution",
-                  ],
-                  [
-                    "Execution logs",
-                    "Live monitoring",
-                    "Open Execution Logs for your activity",
-                  ],
-                  [
-                    "Security events",
-                    "Policy events",
-                    "Open Security Monitoring for stored records",
-                  ],
-                ].map(([title, value, note]) => (
-                  <section
-                    key={title}
-                    className="rounded-xl border border-slate-800 bg-[#0e1726] p-5"
-                  >
-                    <h2 className="text-sm text-slate-400">{title}</h2>
-                    <p className="mt-4 text-xl font-semibold">{value}</p>
-                    <p className="mt-3 text-xs text-slate-500">{note}</p>
-                  </section>
-                ))}
-              </div>
-              <div className="mt-7 grid gap-6 xl:grid-cols-2">
-                <section className="rounded-xl border border-slate-800 p-6">
-                  <h2 className="text-lg font-medium">
-                    Explore your workspace
-                  </h2>
-                  <p className="mt-2 text-sm text-slate-400">
-                    The foundation is in place. Explore what comes next.
-                  </p>
-                  <div className="mt-5 space-y-3">
-                    {sections.slice(1, 4).map((section) => (
-                      <button
-                        key={section}
-                        onClick={() =>
-                          [
-                            "Agent Playground",
-                            "Sandbox",
-                            "Execution Logs",
-                            "Security Monitoring",
-                          ].includes(section)
-                            ? router.push(
-                                section === "Sandbox"
-                                  ? "/sandbox"
-                                  : section === "Agent Playground"
-                                    ? "/playground"
-                                    : "/monitoring",
-                              )
-                            : setActive(section)
-                        }
-                        className="flex w-full items-center justify-between rounded-lg bg-slate-900 px-4 py-4 text-left text-sm hover:bg-slate-800"
-                      >
-                        <span>{section}</span>
-                        <span aria-hidden="true" className="text-teal-300">
-                          →
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </section>
-                <section className="rounded-xl border border-slate-800 p-6">
-                  <h2 className="text-lg font-medium">
-                    Built with clear boundaries
-                  </h2>
-                  <p className="mt-4 text-sm leading-7 text-slate-400">
-                    Run bounded text agents with permission-checked tools and
-                    saved conversations. Sandbox execution requires verified
-                    isolation and policy approval. Live monitoring shows your
-                    execution activity, policy decisions, and approvals.
-                  </p>
-                  <div className="mt-6 rounded-lg border border-teal-900 bg-teal-950/30 p-4 text-sm leading-6 text-teal-200">
-                    Agents can use only server-authorized tools. Python
-                    execution requires sandbox readiness and policy checks.
-                  </div>
-                </section>
-              </div>
-            </>
-          ) : (
-            <section className="mt-6 rounded-xl border border-dashed border-slate-700 px-6 py-16 text-center">
-              <span aria-hidden="true" className="text-4xl text-teal-400">
-                ◇
-              </span>
-              <h2 className="mt-5 text-xl font-medium">
-                {active} is coming in a future phase
-              </h2>
-              <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-slate-400">
-                {descriptions[active]} This section is a placeholder in Phase 5.
-              </p>
-              <button
-                onClick={() => setActive("Overview")}
-                className="mt-6 rounded-lg bg-teal-300 px-5 py-3 text-sm font-semibold text-slate-950 hover:bg-teal-200"
-              >
-                Back to overview
-              </button>
-            </section>
+          {overviewError && (
+            <p role="alert" className="mt-5 text-sm text-red-300">
+              {overviewError}
+            </p>
           )}
+          {!overview && !overviewError && (
+            <div
+              aria-busy="true"
+              aria-label="Loading workspace metrics"
+              className="mt-6 h-12 rounded bg-slate-900"
+            />
+          )}
+          <>
+            <p className="mt-5 text-sm text-slate-400">
+              {providerReady === null
+                ? "Checking provider configuration…"
+                : providerReady
+                  ? "An AI provider is configured. Open the Playground to run a task."
+                  : "Provider setup required. Open Settings to review Groq and optional Ollama configuration."}
+            </p>
+            <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                [
+                  "Agent executions",
+                  overview?.agent_executions.total ?? "—",
+                  "Current stored agent turns",
+                ],
+                [
+                  "Active agents",
+                  overview?.active_agents.length ?? "—",
+                  "Running authenticated conversations",
+                ],
+                [
+                  "Pending approvals",
+                  overview?.approvals.pending ?? "—",
+                  "Expiring requests requiring your decision",
+                ],
+                [
+                  "Blocked tool requests",
+                  overview?.blocked_tool_requests ?? "—",
+                  "Retained security rejection events",
+                ],
+              ].map(([title, value, note]) => (
+                <section
+                  key={title}
+                  className="rounded-xl border border-slate-800 bg-[#0e1726] p-5"
+                >
+                  <h2 className="text-sm text-slate-400">{title}</h2>
+                  <p className="mt-4 text-xl font-semibold">{value}</p>
+                  <p className="mt-3 text-xs text-slate-500">{note}</p>
+                </section>
+              ))}
+            </div>
+            <div className="mt-7 grid gap-6 xl:grid-cols-2">
+              <section className="rounded-xl border border-slate-800 p-6">
+                <h2 className="text-lg font-medium">Explore your workspace</h2>
+                <p className="mt-2 text-sm text-slate-400">
+                  Create conversations, review controlled executions, and
+                  monitor your activity.
+                </p>
+                <div className="mt-5 space-y-3">
+                  {sections.slice(1, 4).map((section) => (
+                    <button
+                      key={section}
+                      onClick={() => router.push(routes[section])}
+                      className="flex w-full items-center justify-between rounded-lg bg-slate-900 px-4 py-4 text-left text-sm hover:bg-slate-800"
+                    >
+                      <span>{section}</span>
+                      <span aria-hidden="true" className="text-teal-300">
+                        →
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+              <section className="rounded-xl border border-slate-800 p-6">
+                <h2 className="text-lg font-medium">
+                  Built with clear boundaries
+                </h2>
+                <p className="mt-4 text-sm leading-7 text-slate-400">
+                  Run bounded text agents with permission-checked tools and
+                  saved conversations. Sandbox execution requires verified
+                  isolation and policy approval. Live monitoring shows your
+                  execution activity, policy decisions, and approvals.
+                </p>
+                <div className="mt-6 rounded-lg border border-teal-900 bg-teal-950/30 p-4 text-sm leading-6 text-teal-200">
+                  Agents can use only server-authorized tools. Python execution
+                  requires sandbox readiness and policy checks.
+                </div>
+              </section>
+            </div>
+          </>
           <footer className="mt-10 text-xs text-slate-500">
-            AgentShield AI · Phase 5 foundation
+            AgentShield AI · Security operations workspace
           </footer>
         </main>
       </div>

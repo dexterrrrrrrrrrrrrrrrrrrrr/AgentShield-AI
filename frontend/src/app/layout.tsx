@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 export const metadata: Metadata = {
   title: "AgentShield AI",
-  description: "AI agent security workspace — Phase 2 secure accounts",
+  description:
+    "Security-first AI agents, controlled tools, human approvals, and signed audit trails",
 };
 export default function RootLayout({
   children,

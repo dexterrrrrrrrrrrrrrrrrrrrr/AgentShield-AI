@@ -95,8 +95,14 @@ test("playground tool run, persisted history, errors, retry, clearing and mobile
     ),
   ).toBe(true);
   await page.getByRole("button", { name: "Clear conversation" }).click();
+  await page
+    .getByRole("dialog", { name: "Clear conversation?" })
+    .getByRole("button", { name: "Delete conversation" })
+    .click();
   await expect(
-    page.getByText("Start a task. No shell or sandbox execution is available."),
+    page.getByText(
+      "Start a task. Tools follow your allowlist; Python execution requires verified sandbox isolation and policy approval.",
+    ),
   ).toBeVisible();
   await page.reload();
   await expect(page.getByRole("button", { name: /groq ·/ })).toHaveCount(0);

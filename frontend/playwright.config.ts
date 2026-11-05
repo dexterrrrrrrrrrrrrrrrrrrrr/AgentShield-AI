@@ -36,6 +36,9 @@ export default defineConfig({
         JWT_SECRET: randomBytes(48).toString("base64url"),
         CORS_ORIGINS: "http://localhost:3001",
         LOGIN_IP_LIMIT: "100",
+        // Larger deterministic journey suite; production defaults and backend
+        // rate-limit regression tests remain unchanged.
+        REGISTER_IP_LIMIT: "30",
       },
     },
     {

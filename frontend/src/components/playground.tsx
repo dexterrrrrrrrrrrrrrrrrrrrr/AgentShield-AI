@@ -1,6 +1,15 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import WorkspaceNav from "./workspace-nav";
+import { ApiError } from "@/lib/protected-api";
 import { agentApi } from "@/lib/agent-client";
 
 type Provider = {
@@ -9,7 +18,13 @@ type Provider = {
   enabled: boolean;
   configured: boolean;
 };
-type Session = { id: string; provider: string; model: string; status: string };
+type Session = {
+  id: string;
+  provider: string;
+  model: string;
+  status: string;
+  allowed_tools: string[];
+};
 type Event = { kind: string; tool?: string; input?: string; output?: string };
 type Turn = {
   id: string;
@@ -17,9 +32,19 @@ type Turn = {
   assistant_content: string;
   status: string;
   events: Event[];
+  pending_execution_ids?: string[];
 };
 
 export default function Playground() {
+  const router = useRouter();
+  const search = useSearchParams();
+  const requestedSession = search.get("session");
+  const opening = useRef(0);
+  const configurationLoaded = useRef(false);
+  const clearDialog = useRef<HTMLDialogElement>(null);
+  const [tools, setTools] = useState<string[]>([]);
+  const [allowedTools, setAllowedTools] = useState<string[]>([]);
+  const [uncertain, setUncertain] = useState(false);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [provider, setProvider] = useState("groq");
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -32,6 +57,9 @@ export default function Playground() {
   const [last, setLast] = useState("");
   const [hasMore, setHasMore] = useState(false);
   const current = providers.find((p) => p.id === provider);
+  const awaitingApproval = messages.some(
+    (m) => m.status === "awaiting_approval",
+  );
 
   async function refresh(offset = 0) {
     const data = await agentApi(`/sessions?offset=${offset}&limit=20`);
@@ -44,6 +72,8 @@ export default function Playground() {
       .then(([p, s]) => {
         if (live) {
           setProviders(p.providers);
+          setTools(p.tools);
+          if (!configurationLoaded.current) setAllowedTools(p.tools);
           setSessions(s.sessions);
           setHasMore(s.sessions.length === 20);
           setReady(true);
@@ -60,38 +90,53 @@ export default function Playground() {
     };
   }, []);
 
-  async function open(session: Session) {
+  const open = useCallback(async (session: Pick<Session, "id">) => {
+    const request = ++opening.current;
     setBusy(true);
     setError("");
+    setSelected(null);
+    setMessages([]);
+    setLast("");
+    setUncertain(false);
     try {
       const data = await agentApi(`/sessions/${session.id}/messages?limit=50`);
+      if (request !== opening.current) return;
       setSelected(data.session);
       setProvider(data.session.provider);
+      configurationLoaded.current = true;
+      setAllowedTools(data.session.allowed_tools);
       setMessages(data.messages);
-      setLast("");
+      const last = data.messages.at(-1);
+      setError(last?.status === "failed" ? last.assistant_content : "");
+      setLast(last?.status === "failed" ? last.user_content : "");
+      setUncertain(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unable to load conversation");
+      if (request === opening.current)
+        setError(
+          e instanceof Error ? e.message : "Unable to load conversation",
+        );
     } finally {
-      setBusy(false);
+      if (request === opening.current) setBusy(false);
     }
-  }
+  }, []);
+  useEffect(() => {
+    if (!requestedSession || !/^[a-f0-9]{32}$/.test(requestedSession)) return;
+    const timer = setTimeout(() => void open({ id: requestedSession }), 0);
+    return () => clearTimeout(timer);
+  }, [requestedSession, open]);
   async function send(content: string) {
-    if (!content.trim() || !current) return;
+    if (!content.trim() || !current || awaitingApproval) return;
     setBusy(true);
     setError("");
     setLast(content);
+    setUncertain(false);
     try {
       const session =
         selected ||
         (await agentApi("/sessions", "POST", {
           provider,
           model: current.model,
-          allowed_tools: [
-            "calculator",
-            "summarize_text",
-            "format_json",
-            "python_sandbox",
-          ],
+          allowed_tools: allowedTools,
         }));
       setSelected(session);
       const turn = await agentApi(`/sessions/${session.id}/messages`, "POST", {
@@ -102,7 +147,11 @@ export default function Playground() {
       if (turn.status === "failed") setError(turn.assistant_content);
       else setLast("");
       await refresh();
+      router.replace(`/playground?session=${session.id}`);
     } catch (e) {
+      setUncertain(
+        e instanceof ApiError && [0, 502, 503, 504].includes(e.status),
+      );
       setError(e instanceof Error ? e.message : "Unable to send message");
     } finally {
       setBusy(false);
@@ -121,7 +170,9 @@ export default function Playground() {
     setError("");
     try {
       await agentApi(`/sessions/${selected.id}`, "DELETE");
+      ++opening.current;
       setSelected(null);
+      router.replace("/playground");
       setMessages([]);
       setLast("");
       await refresh();
@@ -131,23 +182,53 @@ export default function Playground() {
       setBusy(false);
     }
   }
+  async function resolve(turn: Turn) {
+    if (!selected) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await agentApi(
+        `/sessions/${selected.id}/messages/${turn.id}/resolve`,
+        "POST",
+      );
+      setMessages((old) => old.map((m) => (m.id === result.id ? result : m)));
+      setUncertain(false);
+      setLast("");
+      if (result.status === "failed") setError(result.assistant_content);
+      await refresh();
+    } catch (e) {
+      setUncertain(
+        e instanceof ApiError && [0, 502, 503, 504].includes(e.status),
+      );
+      setError(
+        e instanceof Error ? e.message : "Unable to resolve the execution",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <main className="mx-auto max-w-6xl px-5 py-8">
-      <Link href="/" className="text-sm text-teal-300">
-        ← Dashboard
-      </Link>
+      <WorkspaceNav />
       <header className="my-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <p className="text-xs tracking-widest text-teal-300">
-            AGENTSHIELD AI · PHASE 3
+            AGENTSHIELD AI · AGENT OPERATIONS
           </p>
           <h1 className="mt-2 text-3xl font-semibold">Agent Playground</h1>
           <p className="mt-2 text-sm text-slate-400">
-            Text-only agents with bounded, permission-checked tools.
+            Conversations with bounded tools, policy checks, and human approval
+            for sensitive actions.
           </p>
         </div>
         <p role="status" aria-live="polite" className="text-sm text-teal-300">
-          {busy ? "Running…" : !ready ? "Loading…" : "Ready"}
+          {busy
+            ? "Working…"
+            : !ready
+              ? "Loading…"
+              : awaitingApproval
+                ? "Awaiting human approval"
+                : "Ready"}
         </p>
       </header>
       <div className="grid gap-5 md:grid-cols-[220px_1fr]">
@@ -158,23 +239,38 @@ export default function Playground() {
           <button
             disabled={busy}
             onClick={() => {
+              ++opening.current;
               setSelected(null);
+              router.replace("/playground");
               setMessages([]);
               setLast("");
               setError("");
+              setUncertain(false);
             }}
             className="w-full rounded-lg bg-teal-300 p-3 text-sm font-semibold text-slate-950"
           >
             New conversation
           </button>
           <h2 className="mt-6 text-sm text-slate-400">Saved conversations</h2>
+          {!ready && (
+            <div
+              aria-label="Loading conversations"
+              aria-busy="true"
+              className="mt-3 h-16 rounded bg-slate-900"
+            />
+          )}
+          {ready && !sessions.length && (
+            <p className="mt-3 text-xs text-slate-500">
+              No saved conversations yet.
+            </p>
+          )}
           <div className="mt-3 space-y-2">
             {sessions.map((s) => (
               <button
                 key={s.id}
                 disabled={busy}
                 aria-current={selected?.id === s.id ? "true" : undefined}
-                onClick={() => open(s)}
+                onClick={() => router.push(`/playground?session=${s.id}`)}
                 className="block w-full truncate rounded-lg border border-slate-700 p-3 text-left text-xs hover:border-teal-300"
               >
                 {s.provider} · {s.id.slice(0, 8)}
@@ -219,17 +315,51 @@ export default function Playground() {
                 disabled={busy || !!selected}
                 className="mt-2 block max-w-full rounded-lg border border-slate-700 bg-slate-950 p-3"
               >
-                <option>{current?.model || "Loading…"}</option>
+                <option>
+                  {selected?.model || current?.model || "Loading…"}
+                </option>
               </select>
             </label>
             <button
-              disabled={busy}
-              onClick={clear}
+              disabled={busy || !selected}
+              onClick={() => clearDialog.current?.showModal()}
               className="rounded-lg border border-slate-700 p-3 text-sm"
             >
               Clear conversation
             </button>
           </div>
+          <fieldset
+            disabled={busy || !!selected || !ready}
+            aria-label="Tool permissions"
+            className="mt-5 rounded-lg border border-slate-800 p-4"
+          >
+            <legend className="px-2 text-sm text-slate-300">
+              Tool permissions
+            </legend>
+            <p className="mb-3 text-xs text-slate-500">
+              Choose the server-supported tools for this conversation. Saved
+              permissions are locked; create a new conversation to change them.
+            </p>
+            <div className="flex flex-wrap gap-x-5 gap-y-3">
+              {tools.map((tool) => (
+                <label key={tool} className="flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    aria-label={tool}
+                    checked={allowedTools.includes(tool)}
+                    onChange={(e) =>
+                      setAllowedTools((old) =>
+                        e.target.checked
+                          ? [...old, tool]
+                          : old.filter((t) => t !== tool),
+                      )
+                    }
+                  />
+                  {tool}
+                </label>
+              ))}
+            </div>
+          </fieldset>
           {current && !current.configured && (
             <p className="mt-4 text-sm text-amber-200">
               Groq is not configured. Add the API key securely to the backend
@@ -243,10 +373,16 @@ export default function Playground() {
               </p>
               <button
                 disabled={busy}
-                onClick={() => (last ? send(last) : window.location.reload())}
+                onClick={() =>
+                  uncertain && selected
+                    ? open(selected)
+                    : last
+                      ? send(last)
+                      : window.location.reload()
+                }
                 className="mt-2 text-sm text-teal-300"
               >
-                Retry
+                {uncertain ? "Reload conversation" : "Retry"}
               </button>
             </div>
           )}
@@ -256,7 +392,8 @@ export default function Playground() {
           >
             {!messages.length && (
               <p className="py-10 text-center text-sm text-slate-400">
-                Start a task. No shell or sandbox execution is available.
+                Start a task. Tools follow your allowlist; Python execution
+                requires verified sandbox isolation and policy approval.
               </p>
             )}
             {messages.map((m) => (
@@ -273,6 +410,36 @@ export default function Playground() {
                   {m.assistant_content ||
                     "Execution interrupted. Retry this task."}
                 </p>
+                {m.status === "awaiting_approval" && (
+                  <section className="rounded border border-amber-800 bg-amber-950/20 p-4">
+                    <h2 className="text-sm font-medium text-amber-200">
+                      Human approval required
+                    </h2>
+                    <p className="mt-2 text-xs text-slate-400">
+                      Review the exact request and approve or reject it in
+                      Monitoring. Then continue this original turn; resolving
+                      never replays the Python code.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-4">
+                      {m.pending_execution_ids?.map((id) => (
+                        <Link
+                          key={id}
+                          href={`/monitoring?execution=${id}`}
+                          className="text-sm text-teal-300"
+                        >
+                          Review approval
+                        </Link>
+                      ))}
+                      <button
+                        disabled={busy}
+                        onClick={() => void resolve(m)}
+                        className="text-sm text-teal-300"
+                      >
+                        Continue after decision
+                      </button>
+                    </div>
+                  </section>
+                )}
                 <details>
                   <summary className="cursor-pointer text-xs text-teal-300">
                     Tool execution timeline
@@ -312,7 +479,7 @@ export default function Playground() {
               maxLength={4000}
               value={text}
               onChange={(e) => setText(e.target.value)}
-              disabled={busy || !ready}
+              disabled={busy || !ready || awaitingApproval}
               rows={3}
               className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 p-3 text-sm"
               placeholder="Calculate (12 + 8) / 2, summarize text, or ask a question…"
@@ -322,7 +489,7 @@ export default function Playground() {
                 {text.length}/4000 · Never enter credentials or sensitive data.
               </p>
               <button
-                disabled={busy || !ready || !text.trim()}
+                disabled={busy || !ready || awaitingApproval || !text.trim()}
                 type="submit"
                 className="rounded-lg bg-teal-300 px-5 py-3 text-sm font-semibold text-slate-950 disabled:opacity-50"
               >
@@ -332,6 +499,36 @@ export default function Playground() {
           </form>
         </section>
       </div>
+      <dialog
+        ref={clearDialog}
+        aria-labelledby="clear-title"
+        className="m-auto max-w-md rounded-xl border border-slate-700 bg-[#0d1422] p-6 text-slate-100 backdrop:bg-black/70"
+      >
+        <h2 id="clear-title" className="text-xl font-semibold">
+          Clear conversation?
+        </h2>
+        <p className="mt-3 text-sm leading-6 text-slate-400">
+          This deletes the selected conversation and its messages. Security
+          audit and sandbox history follow their retention policies.
+        </p>
+        <div className="mt-6 flex gap-4">
+          <button
+            onClick={() => clearDialog.current?.close()}
+            className="rounded border border-slate-700 px-4 py-2 text-sm"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => {
+              clearDialog.current?.close();
+              void clear();
+            }}
+            className="rounded bg-red-300 px-4 py-2 text-sm font-semibold text-slate-950"
+          >
+            Delete conversation
+          </button>
+        </div>
+      </dialog>
     </main>
   );
 }

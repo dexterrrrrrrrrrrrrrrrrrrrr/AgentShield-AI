@@ -106,19 +106,17 @@ test("registration, password toggle, login, profile, preserved dashboard, mobile
   expect(await page.evaluate(() => document.cookie)).not.toContain(
     "agentshield_session",
   );
-  for (const section of ["Settings"]) {
-    await page
-      .getByRole("navigation")
-      .getByRole("button", { name: section, exact: true })
-      .click();
-    await expect(
-      page.getByRole("heading", {
-        name: `${section} is coming in a future phase`,
-        exact: true,
-      }),
-    ).toBeVisible();
-  }
-  await page.getByRole("button", { name: "Back to overview" }).click();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("button", { name: "Settings", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Workspace settings", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("navigation", { name: "Workspace navigation" })
+    .getByRole("link", { name: "Dashboard", exact: true })
+    .click();
   await page.route("**/api/health", (route) => route.abort());
   await page.getByRole("button", { name: "Refresh status" }).click();
   await expect(

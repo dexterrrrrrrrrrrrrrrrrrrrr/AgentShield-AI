@@ -1,14 +1,12 @@
 "use client";
-import Link from "next/link";
+import WorkspaceNav from "@/components/workspace-nav";
 import { LogoutButton, useUser } from "@/components/session";
 
 export default function Profile() {
   const user = useUser();
   return (
     <main className="mx-auto max-w-2xl px-6 py-12">
-      <Link href="/" className="text-sm text-teal-300 hover:underline">
-        ← Back to dashboard
-      </Link>
+      <WorkspaceNav logout={false} />
       <section className="mt-7 rounded-2xl border border-slate-800 bg-[#0d1422] p-7">
         <p className="text-xs font-semibold tracking-widest text-teal-300">
           YOUR ACCOUNT

@@ -160,7 +160,7 @@ test("monitoring shows snapshot errors and recovers on refresh", async ({
     ).status(),
   ).toBe(200);
   let fail = true;
-  await page.route("**/api/monitor/summary", async (route) => {
+  await page.route("**/api/monitor/summary*", async (route) => {
     if (fail)
       await route.fulfill({
         status: 503,
