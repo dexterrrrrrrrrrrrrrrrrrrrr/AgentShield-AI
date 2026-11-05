@@ -75,15 +75,9 @@ class Providers:
                     api_key=s.groq_api_key.get_secret_value(),
                     timeout=s.agent_provider_timeout,
                     max_retries=0,
-                    base_url="https://api.groq.com",
                     default_headers={"Accept-Encoding": "identity"},
                     http_client=groq.DefaultAsyncHttpxClient(follow_redirects=False),
                 ) as client:
-                    # Explicit availability check; no silent model or provider fallback.
-                    async with client.models.with_streaming_response.retrieve(
-                        model
-                    ) as response:
-                        await read_bounded(response)
                     async with client.chat.completions.with_streaming_response.create(
                         model=model,
                         messages=messages,
