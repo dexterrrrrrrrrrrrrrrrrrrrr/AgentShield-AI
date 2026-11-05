@@ -43,7 +43,7 @@ Requirements: Node.js 24/npm, Python 3.12, MongoDB Community 7, and Colima/Docke
 brew tap mongodb/brew
 brew install mongodb-community@7.0
 mkdir -p "$HOME/.local/share/agentshield/mongodb7"
-mongod --dbpath "$HOME/.local/share/agentshield/mongodb7" --bind_ip 127.0.0.1 --port 27017 --wiredTigerCacheSizeGB 0.25
+"$(brew --prefix mongodb-community@7.0)/bin/mongod" --dbpath "$HOME/.local/share/agentshield/mongodb7" --bind_ip 127.0.0.1 --port 27017 --wiredTigerCacheSizeGB 0.25
 ```
 
 Use a **new** MongoDB 7 data directory. Choose one database startup method; do not start native and container databases on the same port. If using the authenticated Compose MongoDB for native development, use the documented `compose.native.yaml` override and its app credentials instead; never expose it publicly.
