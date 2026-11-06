@@ -405,6 +405,11 @@ export default function Playground() {
               >
                 <div className="user-message"><p className="message-label">You</p><p className="whitespace-pre-wrap break-words text-sm">{m.user_content}</p></div>
                 <div className="assistant-message"><p className="message-label">Assistant · {m.status}</p><SafeMarkdown text={m.assistant_content || "Execution interrupted. Retry this task."} /></div>
+                {m.status === "completed" && !m.events.some((event) => event.kind === "tool_request") && (
+                  <p className="text-xs text-slate-400">
+                    No tool request was recorded for this turn. The model can answer directly even when tools are enabled.
+                  </p>
+                )}
                 {m.status === "awaiting_approval" && (
                   <section className="rounded border border-amber-800 bg-amber-950/20 p-4">
                     <h2 className="text-sm font-medium text-amber-200">
