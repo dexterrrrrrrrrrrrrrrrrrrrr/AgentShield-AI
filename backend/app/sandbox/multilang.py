@@ -5,9 +5,8 @@ program-supplied JSON, determine phase status. /tmp remains a noexec mount; the
 trusted native launcher deliberately executes the compiled ELF using a sealed
 anonymous memfd. This grants native execution within the same container boundary.
 """
-import io
+import base64
 import json
-import tarfile
 import time
 
 from .registry import get_language
@@ -39,17 +38,32 @@ os.execve(fd,['program'],{'PATH':'/usr/bin:/bin','LANG':'C.UTF-8','HOME':'/tmp',
 '''
 
 
-def source_archive(language, code, stdin):
-    """An in-memory tar of two fixed-name files; no host file access."""
-    entry = get_language(language)
-    output = io.BytesIO()
-    with tarfile.open(fileobj=output, mode="w") as archive:
-        for name, content in ((entry.filename, code), ("input.txt", stdin)):
-            data = content.encode("utf-8")
-            info = tarfile.TarInfo(name)
-            info.size, info.uid, info.gid, info.mode = len(data), 65534, 65534, 0o600
-            archive.addfile(info, io.BytesIO(data))
-    return output.getvalue()
+# Data arrives as base64 argv, never interpolated into this trusted script.
+# It runs only in the verified container before any compiler or submitted program.
+STAGE = r'''
+import base64
+name=sys.argv[2]
+if name not in ('main.py','main.c','main.cpp','Main.java','main.js','main.ts'):
+    raise SystemExit(125)
+if len(sys.argv[3])>56000: raise SystemExit(125)
+parts=json.loads(sys.argv[3])
+if not isinstance(parts,list) or len(parts)!=2: raise SystemExit(125)
+values=[base64.b64decode(part,validate=True) for part in parts]
+if not 0<len(values[0])<=e['code_bytes'] or len(values[1])>8192:
+    raise SystemExit(125)
+for data in values:
+    data.decode('utf-8')
+    if b'\x00' in data: raise SystemExit(125)
+for path,data in (('/tmp/'+name,values[0]),('/tmp/input.txt',values[1])):
+    fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+    with os.fdopen(fd,'wb') as target: target.write(data)
+'''
+
+
+def source_payload(code, stdin):
+    """Bounded data-only argument; no tar, host files, mounts or shell parsing."""
+    return json.dumps([base64.b64encode(v.encode('utf-8')).decode('ascii')
+                       for v in (code, stdin)], separators=(',', ':'))
 
 
 def execute_phase(adapter, client, container, command, timeout, cap):
@@ -103,11 +117,20 @@ def run_job(adapter, client, language, code, stdin):
         values = json.loads(probe["stdout"])
         if probe["status"] != "completed" or not adapter.valid_probe(values):
             raise Unavailable("Effective isolation limits do not match")
-        if not container.put_archive("/tmp", source_archive(language, code, stdin)):
-            raise Unavailable("Unable to stage source")
         def command(args, timeout, native=False):
             expected = json.dumps({"memory": adapter.s.sandbox_memory_mb * 1048576, "pids": adapter.s.sandbox_pids, "cpus": adapter.s.sandbox_cpus, "timeout": timeout})
             return ["python", "-I", "-u", "-c", CHECK + GUARD + (NATIVE_LAUNCH if native else LAUNCH), expected, json.dumps(args)]
+        # Docker's archive API rejects readonly rootfs even for writable tmpfs.
+        # Start only the inert holder, verify it, then stage DATA via a fixed
+        # non-root writer. Rootfs stays read-only throughout the lifecycle.
+        expected = json.dumps({"memory": adapter.s.sandbox_memory_mb * 1048576,
+            "pids": adapter.s.sandbox_pids, "cpus": adapter.s.sandbox_cpus,
+            "timeout": 3, "code_bytes": adapter.s.sandbox_code_bytes})
+        stage = execute_phase(adapter, client, container,
+            ["python", "-I", "-u", "-c", CHECK + GUARD + STAGE,
+             expected, entry.filename, source_payload(code, stdin)], 3, 1024)
+        if stage["status"] != "completed" or stage["exit_code"] != 0:
+            raise Unavailable("Unable to stage source")
         remaining = adapter.s.sandbox_output_bytes
         if entry.compilation_required:
             compile_timeout = getattr(adapter.s, "sandbox_compile_timeout", 10)

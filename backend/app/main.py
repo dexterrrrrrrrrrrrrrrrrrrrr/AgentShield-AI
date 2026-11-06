@@ -103,7 +103,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.passwords = Passwords()
             app.state.agent_engine = Engine(settings)
             app.state.agent_active = 0
-            app.state.sandbox_manager = SandboxManager(settings)
+            if settings.sandbox_transport == "executor":
+                from .sandbox.remote import RemoteManager
+                app.state.sandbox_manager = RemoteManager(settings)
+            else:
+                app.state.sandbox_manager = SandboxManager(settings)
             app.state.monitor = Monitor(db, settings)
             yield
         finally:

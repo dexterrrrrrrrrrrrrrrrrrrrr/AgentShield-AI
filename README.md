@@ -21,7 +21,7 @@ Google sign-in is optional: configure `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
 | Mode | Available functionality | Sandbox / Ollama |
 | --- | --- | --- |
 | Full native-host development | All application flows; frontend/API on the host, MongoDB 7 local or in Colima | Optional real sandbox after Colima validation; optional native loopback Ollama |
-| Docker Compose | Non-root frontend/backend, authenticated MongoDB 7, chat through configured Groq, monitoring/audit/approvals API | Sandbox is explicitly disabled; no Docker socket in backend. Native Ollama is not made reachable by relaxing SSRF rules. |
+| Docker Compose | Non-root frontend/backend, authenticated MongoDB 7, chat through configured Groq, monitoring/audit/approvals API | Sandbox is disabled by default; the optional private executor is documented below. No Docker socket in backend. Native Ollama is not made reachable by relaxing SSRF rules. |
 
 Compose is a local deployment with explicit HTTP development cookies. Public production deployment additionally requires HTTPS/WSS, Secure production cookies, private database networking/credentials, trusted proxy/Host/origin configuration, backups, and operator hardening. It is not certified malicious multi-tenant isolation.
 
@@ -158,3 +158,5 @@ COMPOSE_BASE_URL=http://localhost:3000 node scripts/browser-compose.mjs
 See [testing.md](docs/testing.md) for database requirements, real versus mocked boundaries, dependency audits, isolated outage/recovery behavior, and exact sandbox commands. [phase7.md](docs/phase7.md) records measured results and unverified properties; no production-readiness claim is based on a skipped test.
 
 Current upgrade evidence and remaining release gates: [Phase 8 report](docs/phase8-completion.md).
+
+Optional Compose execution plane: [dedicated sandbox executor](docs/sandbox-executor.md). It retains the public backend's isolation from Docker and adds a private authenticated execution service. Real execution through this deployed path requires successful target-runtime validation; healthy services alone are insufficient.

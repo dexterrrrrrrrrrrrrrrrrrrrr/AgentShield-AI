@@ -28,7 +28,8 @@ class SandboxService:
         self.agent_turn_id = agent_turn_id
 
     def validate_code(self, code):
-        if any(v in code for v in credential_values(self.s)) or CREDENTIAL.search(code):
+        executor_key = getattr(self.manager, "key", b"")
+        if (executor_key and executor_key.decode() in code) or any(v in code for v in credential_values(self.s)) or CREDENTIAL.search(code):
             raise HTTPException(422, "Remove credentials from submitted code")
 
     def approval_payload(self, pending):

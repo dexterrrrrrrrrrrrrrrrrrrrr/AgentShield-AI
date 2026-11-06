@@ -18,3 +18,5 @@ backups/
 .ruff_cache/
 
 phase4-validation-*.json
+.executor-token
+.executor-secrets/

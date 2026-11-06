@@ -21,3 +21,15 @@ EXPOSE 8000
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3).read()"]
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers", "--no-access-log", "--ws", "websockets", "--ws-max-size", "1024", "--ws-max-queue", "8", "--limit-concurrency", "64", "--timeout-keep-alive", "5", "--timeout-graceful-shutdown", "30"]
+
+# Trusted orchestration service: only sandbox modules, never public app routes.
+FROM runtime AS executor
+USER root
+RUN mkdir -p /run/agentshield-executor && chown 10001:10001 /run/agentshield-executor && chmod 700 /run/agentshield-executor
+USER 10001:10001
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=5 \
+    CMD ["python", "-c", "import httpx; c=httpx.Client(transport=httpx.HTTPTransport(uds='/run/agentshield-executor/control.sock')); c.get('http://executor/health').raise_for_status()"]
+CMD ["python", "-m", "app.sandbox.executor"]
+
+# Keep the public application as the default docker build target.
+FROM runtime AS application

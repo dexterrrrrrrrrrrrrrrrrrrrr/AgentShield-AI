@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     monitor_heartbeat_seconds: float = Field(default=15, ge=1, le=30)
     monitor_pong_seconds: float = Field(default=35, ge=3, le=90)
     monitor_poll_seconds: float = Field(default=1, ge=0.05, le=5)
+    sandbox_transport: Literal["local", "executor"] = "local"
     sandbox_enabled: bool = False
     sandbox_native_image: str = Field(default="", pattern=r"^(?:sha256:[a-f0-9]{64})?$")
     sandbox_java_image: str = Field(default="", pattern=r"^(?:sha256:[a-f0-9]{64})?$")
