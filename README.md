@@ -160,3 +160,10 @@ See [testing.md](docs/testing.md) for database requirements, real versus mocked 
 Current upgrade evidence and remaining release gates: [Phase 8 report](docs/phase8-completion.md).
 
 Optional Compose execution plane: [dedicated sandbox executor](docs/sandbox-executor.md). It retains the public backend's isolation from Docker and adds a private authenticated execution service. Real execution through this deployed path requires successful target-runtime validation; healthy services alone are insufficient.
+
+### Optional trusted-local automatic Code Sandbox
+
+Use `SANDBOX_POLICY=auto` with `SANDBOX_TRUSTED_LOCAL=true`, development mode and
+loopback origins to run direct code submissions without a manual approval step.
+Production defaults and agent approval workflows are preserved. See
+[configuration, existing Compose deployment commands and verification](docs/sandbox-auto-execution.md).

@@ -9,7 +9,7 @@ from ..guards import CREDENTIAL, credential_values
 from ..guards import redact as redact_credentials
 from ..security import utcnow
 from .manager import Unavailable
-from .policy import CodeRequest, Decision, evaluate, fingerprint, limits
+from .policy import CodeRequest, Decision, evaluate, fingerprint, limits, policy_mode, policy_name
 
 
 class SandboxService:
@@ -26,6 +26,9 @@ class SandboxService:
         self.monitor = monitor
         self.authorize = authorize
         self.agent_turn_id = agent_turn_id
+
+    def mode(self, payload):
+        return policy_mode(self.s, agent_request=bool(payload.agent_session_id or self.agent_turn_id))
 
     def validate_code(self, code):
         executor_key = getattr(self.manager, "key", b"")
@@ -99,7 +102,7 @@ class SandboxService:
             quota=True,
             available=available["ready"],
             enabled=s.sandbox_enabled,
-            mode=s.sandbox_policy,
+            mode=self.mode(payload),
             max_size=s.sandbox_code_bytes,
         )
         eid = uuid.uuid4().hex
@@ -119,6 +122,7 @@ class SandboxService:
             "compile_stderr": "",
             "execution_duration_ms": None,
             "policy_decision": str(decision),
+            "execution_policy": policy_name(s, agent_request=bool(payload.agent_session_id or self.agent_turn_id)),
             "request_hash": digest,
             "status": "pending_approval"
             if decision == Decision.REQUIRE_APPROVAL
@@ -214,7 +218,7 @@ class SandboxService:
         if not await self.owned(uid, payload):
             raise HTTPException(404, "Agent session not found")
         if (
-            self.s.sandbox_policy == "deny"
+            self.mode(payload) == "deny"
             or not (await self.ready(payload.language))["ready"]
         ):
             raise HTTPException(503, "SANDBOX_UNAVAILABLE")
@@ -257,9 +261,9 @@ class SandboxService:
             decision="ALLOW",
             result="queued",
         )
-        return self.public(await self.run(uid, eid, payload), self.s)
+        return self.public(await self.run(uid, eid, payload, approved=True), self.s)
 
-    async def run(self, uid, eid, payload):
+    async def run(self, uid, eid, payload, *, approved=False):
         authorization_failure = None
         # Distributed admission: one live sandbox across backend workers.
         await self.db.sandbox_locks.update_one(
@@ -295,7 +299,8 @@ class SandboxService:
                 if (
                     not await self.owned(uid, payload)
                     or not self.s.sandbox_enabled
-                    or self.s.sandbox_policy == "deny"
+                    or self.mode(payload) == "deny"
+                    or (not approved and self.mode(payload) != "allow")
                 ):
                     raise HTTPException(403, "Sandbox authorization failed")
                 result = (

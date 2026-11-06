@@ -409,7 +409,7 @@ def test_consumed_marker_survives_original_expiry_without_granting_replay(client
     headers = csrf_headers(client)
     original = SandboxService.run
 
-    async def during_execution(self, uid, eid, payload):
+    async def during_execution(self, uid, eid, payload, *, approved=False):
         marker = await self.db.sandbox_approvals.find_one({"_id": eid, "user_id": uid})
         assert marker["state"] == "used" and "request" not in marker
         assert marker["expires_at"] > deadline + timedelta(seconds=30)
@@ -433,7 +433,7 @@ def test_consumed_marker_survives_original_expiry_without_granting_replay(client
             headers=headers,
         )
         assert response.status_code == 409 and "being recorded" in response.text
-        return await original(self, uid, eid, payload)
+        return await original(self, uid, eid, payload, approved=approved)
 
     with patch.object(SandboxService, "run", during_execution):
         assert approve(client, item).status_code == 200

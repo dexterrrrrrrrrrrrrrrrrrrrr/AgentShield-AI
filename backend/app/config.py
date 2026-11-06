@@ -61,7 +61,8 @@ class Settings(BaseSettings):
     sandbox_java_image: str = Field(default="", pattern=r"^(?:sha256:[a-f0-9]{64})?$")
     sandbox_node_image: str = Field(default="", pattern=r"^(?:sha256:[a-f0-9]{64})?$")
     sandbox_compile_timeout: int = Field(default=10, ge=1, le=30)
-    sandbox_policy: Literal["deny", "approval", "allow"] = "approval"
+    sandbox_policy: Literal["deny", "approval", "allow", "auto"] = "approval"
+    sandbox_trusted_local: bool = False
     sandbox_docker_url: str = "unix:///var/run/docker.sock"
     sandbox_memory_mb: int = Field(default=128, ge=128, le=256)
     sandbox_cpus: float = Field(default=1, ge=0.1, le=1)
@@ -72,6 +73,25 @@ class Settings(BaseSettings):
     sandbox_retention_days: int = Field(default=7, ge=1, le=30)
     sandbox_approval_seconds: int = Field(default=300, ge=30, le=600)
     sandbox_user_limit: int = Field(default=5, ge=1, le=20)
+
+    @property
+    def sandbox_auto_allowed(self) -> bool:
+        return (
+            self.sandbox_trusted_local
+            and self.app_env == "development"
+            and bool(self.origins)
+            and all(urlparse(origin).hostname in ("localhost", "127.0.0.1", "::1")
+                    for origin in self.origins)
+        )
+
+    @model_validator(mode="after")
+    def trusted_sandbox_policy(self):
+        if self.sandbox_policy == "auto" and not self.sandbox_auto_allowed:
+            raise ValueError(
+                "SANDBOX_POLICY=auto requires SANDBOX_TRUSTED_LOCAL=true, "
+                "APP_ENV=development and loopback frontend origins"
+            )
+        return self
 
     @field_validator("sandbox_docker_url")
     @classmethod

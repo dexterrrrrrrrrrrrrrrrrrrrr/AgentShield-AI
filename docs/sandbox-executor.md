@@ -74,3 +74,10 @@ Do not use `down -v` for persistent deployments. In uncertain execution failures
 Final backend/security run: **350 passed, 16 real-Docker tests skipped**. Both images built, Compose validated, and all four services were healthy. Actual container inspection confirmed the backend lacks a Docker socket and the non-root read-only executor has no network attachment. Automated tests cover six-language remote dispatch, actual existing auth/CSRF/approval/persistence with a mocked execution adapter, HMAC rejection, replay/restart rejection, configuration mismatch, oversized input, response-field injection and fail-closed transport behavior. These are not real Docker isolation tests.
 
 The cloud Compose stack was built and all four services became healthy. An actual registered/logged-in request through the public frontend/backend reached the executor, which inspected the daemon and returned `CGROUP_V2_UNAVAILABLE`. **Operational execution is BLOCKED**, because this daemon reports cgroup v2 with driver `none`; zero submitted programs ran. Both standalone validators likewise stopped at readiness. Earlier user-reported Colima 12/12 and 6/6 results do not verify this newly deployed path. Do not call the Sandbox operational until the deployed validator succeeds on the target runtime.
+
+## Optional local automatic execution
+
+Approval remains the Compose default. For the direct Code Sandbox compiler UX,
+see [trusted-local auto execution](sandbox-auto-execution.md). The dedicated
+executor and isolation checks are unchanged. Use `--policy auto` only after
+explicitly configuring that mode; the validator otherwise expects approval.

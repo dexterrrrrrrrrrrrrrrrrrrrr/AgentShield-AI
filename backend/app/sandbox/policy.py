@@ -108,3 +108,20 @@ def evaluate(
     if not enabled or not available:
         return Decision.DENY
     return Decision.REQUIRE_APPROVAL if mode == "approval" else Decision.ALLOW
+
+
+def policy_mode(settings, *, agent_request=False):
+    """Only direct Code Sandbox requests opt in to trusted-local automation."""
+    if settings.sandbox_policy != "auto":
+        return settings.sandbox_policy
+    # Recheck at execution time too; never rely on frontend metadata or startup alone.
+    if not settings.sandbox_auto_allowed:
+        return "deny"
+    return "approval" if agent_request else "allow"
+
+
+def policy_name(settings, *, agent_request=False):
+    mode = policy_mode(settings, agent_request=agent_request)
+    if mode == "allow":
+        return "AUTO_EXECUTE" if settings.sandbox_policy == "auto" else "ALLOW"
+    return "REQUIRE_APPROVAL" if mode == "approval" else "DENY"
