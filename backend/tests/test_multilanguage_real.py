@@ -11,7 +11,7 @@ def test_real_registered_runtime(settings, language):
     settings.sandbox_enabled = True
     adapter = DockerAdapter(settings)
     assert adapter.readiness(language)['ready'], 'SANDBOX_UNAVAILABLE: real controls or image not verified'
-    outcome = adapter.execute(PROGRAMS[language], language=language)
+    outcome = adapter.execute(PROGRAMS[language], language=language, stdin="staging validation\n")
     assert outcome['status'] == 'completed'
     assert outcome['stdout'] == 'hello\n'
     client = adapter.factory()

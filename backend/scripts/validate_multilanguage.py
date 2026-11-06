@@ -30,7 +30,7 @@ def main():
             print(json.dumps(report, indent=2)); return 2
     report['status'] = 'PASS'
     for language, code in PROGRAMS.items():
-        output = adapter.execute(code, language=language)
+        output = adapter.execute(code, language=language, stdin="staging validation\n")
         passed = output['status']=='completed' and output['stdout']=='hello\n'
         report['tests'].append({'language':language, 'passed':passed,
                                'compile_status':output.get('compile_status')})
