@@ -84,10 +84,10 @@ async def login(payload: LoginInput, request: Request, response: Response):
     passwords = request.app.state.passwords
     user = await db.users.find_one({"email": str(payload.email)})
     valid = await passwords.verify(
-        user["password_hash"] if user else passwords.dummy,
+        user.get("password_hash") or passwords.dummy if user else passwords.dummy,
         payload.password.get_secret_value(),
     )
-    if not user or not valid:
+    if not user or not user.get("password_hash") or not valid:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if passwords.hasher.check_needs_rehash(user["password_hash"]):
         await db.users.update_one(
@@ -100,6 +100,13 @@ async def login(payload: LoginInput, request: Request, response: Response):
                 }
             },
         )
+    return await create_session(request, response, user)
+
+
+async def create_session(request: Request, response: Response, user: dict):
+    """Shared local session infrastructure; provider tokens never become sessions."""
+    settings = request.app.state.settings
+    db = request.app.state.db
     # JWT NumericDate is whole seconds; expose the same real expiration in JSON.
     now = utcnow().replace(microsecond=0)
     expires = now + timedelta(minutes=settings.access_token_minutes)
@@ -107,6 +114,8 @@ async def login(payload: LoginInput, request: Request, response: Response):
     await db.sessions.insert_one(
         {"_id": sid, "user_id": user["_id"], "created_at": now, "expires_at": expires}
     )
+    await db.users.update_one({"_id": user["_id"]}, {"$set": {"last_login_at": now}})
+    user = {**user, "last_login_at": now}
     token = encode_token(
         settings, subject=user["_id"], token_id=sid, use="access", expires=expires
     )
@@ -139,7 +148,7 @@ async def logout(request: Request, identity=Depends(current_identity)):
     )
     settings = request.app.state.settings
     response = Response(status_code=204)
-    for name in (settings.session_cookie, settings.csrf_cookie):
+    for name in (settings.session_cookie, settings.csrf_cookie, settings.oauth_cookie):
         response.delete_cookie(
             name,
             path="/",

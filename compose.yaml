@@ -47,6 +47,9 @@ services:
       TRUSTED_HOSTS: backend,localhost,127.0.0.1
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-8b-instant}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
       OLLAMA_ENABLED: "false"
       # No Docker socket, remote daemon, or sandbox credentials enter this service.
       SANDBOX_ENABLED: "false"

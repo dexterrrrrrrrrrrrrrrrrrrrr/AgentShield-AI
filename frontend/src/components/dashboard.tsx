@@ -28,7 +28,7 @@ type Connection = "checking" | "connected" | "unavailable";
 const descriptions: Record<Section, string> = {
   Overview: "Your command center for safer agent development.",
   "Agent Playground": "Conversations with bounded, permission-checked tools.",
-  Sandbox: "Isolated Python execution with independent security policies.",
+  Sandbox: "Isolated multi-language execution with independent security policies.",
   "Execution Logs": "Your stored execution history and live activity.",
   "Security Monitoring":
     "Policy decisions, signed audit events, and human approvals.",
@@ -298,7 +298,7 @@ export default function Dashboard() {
                   execution activity, policy decisions, and approvals.
                 </p>
                 <div className="mt-6 rounded-lg border border-teal-900 bg-teal-950/30 p-4 text-sm leading-6 text-teal-200">
-                  Agents can use only server-authorized tools. Python execution
+                  Agents can use only server-authorized tools. Code execution
                   requires sandbox readiness and policy checks.
                 </div>
               </section>

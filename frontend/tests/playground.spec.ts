@@ -101,7 +101,7 @@ test("playground tool run, persisted history, errors, retry, clearing and mobile
     .click();
   await expect(
     page.getByText(
-      "Start a task. Tools follow your allowlist; Python execution requires verified sandbox isolation and policy approval.",
+      "Start a task. Tools follow your allowlist; code execution requires verified sandbox isolation and policy approval.",
     ),
   ).toBeVisible();
   await page.reload();

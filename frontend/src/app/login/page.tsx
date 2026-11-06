@@ -2,7 +2,7 @@ import AuthForm from "@/components/auth-form";
 export default async function Login({
   searchParams,
 }: {
-  searchParams: Promise<{ registered?: string }>;
+  searchParams: Promise<{ registered?: string; oauth_error?: string }>;
 }) {
   const params = await searchParams;
   return (
@@ -15,7 +15,7 @@ export default async function Login({
           Account created. Sign in to continue.
         </p>
       )}
-      <AuthForm mode="login" />
+      <AuthForm mode="login" oauthError={params.oauth_error} />
     </>
   );
 }

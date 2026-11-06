@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from ..security import current_identity, limit_attempts, require_csrf, utcnow
-from .policy import CodeRequest
+from .policy import CodeRequest, limits
+from .registry import LANGUAGES
 from .service import SandboxService
 
 router = APIRouter(prefix="/api/sandbox", tags=["Sandbox"])
@@ -30,14 +31,75 @@ class Approval(BaseModel):
     request_hash: str = Field(pattern="^[a-f0-9]{64}$")
 
 
-@router.get("/readiness")
-async def readiness(request: Request, identity=Depends(current_identity)):
+@router.get("/languages")
+async def languages(request: Request, identity=Depends(current_identity)):
     await limit_attempts(request, "sandbox_read", identity[0]["_id"], 60)
-    if await request.app.state.db.sandbox_locks.find_one(
+    return {
+        "languages": [
+            {
+                "id": entry.id,
+                "display_name": entry.display_name,
+                "extension": entry.extension,
+                "version": entry.version,
+                "compilation_required": entry.compilation_required,
+                "limits": limits(request.app.state.settings, entry.id),
+            }
+            for entry in LANGUAGES.values()
+        ]
+    }
+
+
+READINESS_MESSAGES = {
+    "DISABLED": "Sandbox execution is disabled. Enable it only on a trusted host after local isolation validation.",
+    "RECOVERY_REQUIRED": "An interrupted execution requires operator recovery and a new isolation validation before execution can resume.",
+    "BUSY": "The sandbox is busy. Wait for the current execution to finish, then check again.",
+    "DOCKER_UNAVAILABLE": "The trusted backend cannot reach its configured Docker runtime. Start Colima and verify the native backend Docker endpoint.",
+    "CGROUP_V2_UNAVAILABLE": "The runtime does not provide the required cgroup v2 support. Validate Colima CPU, memory and PID controllers with the local validation script.",
+    "ORPHANED_CONTAINERS": "A previous sandbox container requires trusted operator inspection and cleanup before execution can resume.",
+    "RUNTIME_NOT_PROVISIONED": "Build the selected approved runtime with the provisioning script and configure its resulting image digest on the native backend.",
+    "RUNTIME_IMAGE_UNAVAILABLE": "The configured approved runtime image is missing. Provision it locally; the application never downloads runtimes automatically.",
+    "RUNTIME_IMAGE_MISMATCH": "The runtime identity does not match its approved configuration. Rebuild it with the supplied provisioning script.",
+    "RUNTIME_VERSION_MISMATCH": "The compiler or interpreter version differs from the approved registry. Rebuild the approved runtime before execution.",
+    "EFFECTIVE_ISOLATION_MISMATCH": "Effective resource or isolation controls did not match the required policy. Run the local sandbox validator and correct the runtime; execution remains blocked.",
+    "UNVERIFIED": "Required sandbox controls could not be verified. Inspect protected backend diagnostics and run the local validation script.",
+}
+
+
+@router.get("/readiness")
+async def readiness(
+    request: Request,
+    language: str = Query("python", max_length=16),
+    identity=Depends(current_identity),
+):
+    if language not in LANGUAGES:
+        raise HTTPException(422, "Unsupported language")
+    await limit_attempts(request, "sandbox_read", identity[0]["_id"], 60)
+    manager = request.app.state.sandbox_manager
+    blocked = await request.app.state.db.sandbox_locks.find_one(
         {"_id": "execution", "blocked": True}
-    ):
-        return {"ready": False, "code": "SANDBOX_UNAVAILABLE"}
-    return await request.app.state.sandbox_manager.readiness()
+    )
+    if blocked or getattr(manager, "failed", False):
+        reason = "RECOVERY_REQUIRED"
+    elif not request.app.state.settings.sandbox_enabled:
+        reason = "DISABLED"
+    elif getattr(manager, "lock", None) and manager.lock.locked():
+        reason = "BUSY"
+    else:
+        result = await service(request).ready(language)
+        if result["ready"]:
+            return {"ready": True, "code": "READY", "language": language}
+        reason = getattr(
+            getattr(manager, "adapter", None), "last_diagnostic", "UNVERIFIED"
+        )
+        if reason not in READINESS_MESSAGES:
+            reason = "UNVERIFIED"
+    return {
+        "ready": False,
+        "code": "SANDBOX_UNAVAILABLE",
+        "language": language,
+        "reason": reason,
+        "message": READINESS_MESSAGES[reason],
+    }
 
 
 @router.post("/execute", dependencies=[Depends(require_csrf)])
@@ -58,12 +120,20 @@ async def executions(
     request: Request,
     offset: int = Query(0, ge=0, le=10000),
     limit: int = Query(20, ge=1, le=50),
+    language: str | None = Query(None, max_length=16),
     identity=Depends(current_identity),
 ):
+    if language is not None and language not in LANGUAGES:
+        raise HTTPException(422, "Unsupported language")
     uid = identity[0]["_id"]
     await limit_attempts(request, "sandbox_read", uid, 60)
+    query = {"user_id": uid}
+    if language == "python":
+        query["$or"] = [{"language": "python"}, {"language": {"$exists": False}}]
+    elif language:
+        query["language"] = language
     items = (
-        await request.app.state.db.execution_logs.find({"user_id": uid})
+        await request.app.state.db.execution_logs.find(query)
         .sort([("created_at", -1), ("_id", -1)])
         .skip(offset)
         .limit(limit)

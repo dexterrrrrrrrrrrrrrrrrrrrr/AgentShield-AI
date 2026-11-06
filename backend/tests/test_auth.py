@@ -47,7 +47,8 @@ def test_registration_hashes_password_and_normalizes_email(client):
     assert data["email"] == "alice@example.com"
     assert data["full_name"] == "Alice Example"
     assert data["authenticated"] is False
-    assert "password" not in response.text
+    assert not {"password", "password_hash", "confirm_password"}.intersection(response.json())
+    assert "a long test passphrase" not in response.text
     user = db_call(client, "users", "find_one", {"_id": data["id"]})
     assert user["password_hash"].startswith("$argon2id$")
     assert PasswordHasher().verify(user["password_hash"], "a long test passphrase")
@@ -110,7 +111,8 @@ def test_login_and_profile_have_secure_cookie_no_token_body(client):
     register(client)
     response = login(client, " ALICE@EXAMPLE.COM ")
     assert response.status_code == 200
-    assert "password" not in response.text and "token" not in response.json()
+    assert not {"password", "password_hash", "confirm_password"}.intersection(response.json())
+    assert "a long test passphrase" not in response.text and "token" not in response.json()
     cookie = next(
         c
         for c in client.cookies.jar
@@ -343,6 +345,7 @@ def test_indexes_and_future_collections(client):
     collections = client.portal.call(client.app.state.db.list_collection_names)
     assert set(collections) == {
         "users",
+        "oauth_states",
         "sessions",
         "security_events",
         "agent_sessions",

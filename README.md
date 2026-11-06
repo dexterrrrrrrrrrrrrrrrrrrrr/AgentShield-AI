@@ -1,10 +1,20 @@
 # AgentShield AI
 
-A security-first AI agent playground with authenticated conversations, permission-checked tools, human approvals, isolated Python execution, live monitoring, and signed security audit history. Next.js/TypeScript/Tailwind, FastAPI/Python 3.12, MongoDB 7/PyMongo Async, LangGraph, Docker/Colima, and optional Groq/Ollama provide the existing architecture. No paid service, Redis, Celery, or hosted authentication/database is required.
+A security-first AI agent playground with authenticated conversations, permission-checked tools, human approvals, isolated multi-language execution, live monitoring, and signed security audit history. Next.js/TypeScript/Tailwind, FastAPI/Python 3.12, MongoDB 7/PyMongo Async, LangGraph, Docker/Colima, and optional Groq/Ollama provide the existing architecture. Password login and optional Google OpenID Connect share the same secure application sessions. No paid service, Redis, Celery, or hosted database is required.
 
 The dashboard, Playground, Sandbox, Monitoring, Profile, and Settings use actual API state. New conversations select the server-enabled provider/model and a tool allowlist. Pending Python requests wait for an owner decision; **Continue after decision** finalizes the original turn from the stored result without running code again. Missing providers and unavailable sandbox runtimes report errors rather than produce fake responses.
 
 Read [Phase 7 audit](docs/phase7-audit.md), [architecture](docs/architecture.md), [deployment](docs/deployment.md), [security](docs/security.md), [testing](docs/testing.md), and [Phase 7 validation report](docs/phase7.md).
+
+The subsequent [multi-language and Google upgrade plan](docs/multilanguage-google-plan.md), [sandbox guide](docs/multilanguage-sandbox.md), and [Google setup guide](docs/google-auth.md) describe the current additions. Phase 7 test counts are historical, not validation of these additions.
+
+## Multi-language execution and Google sign-in
+
+Sandbox supports Python 3, C, C++, Java, JavaScript and TypeScript through a fixed server registry. Select a starter template, edit highlighted code, optionally supply stdin, and review the exact request before approval. Compilation and execution have separate deadlines inside isolated containers. Results include compiler diagnostics, stdout/stderr, exit status and duration; saved histories can be filtered by language. The `execute_code` agent tool uses the same policy/approval path, and the original `python_sandbox` remains compatible.
+
+Additional runtimes require explicit operator image builds/pins and effective Colima isolation checks. They never download or run automatically. Compose continues to disable sandbox execution and never mounts the Docker socket into the application backend. The [sandbox guide](docs/multilanguage-sandbox.md) explains provisioning, limits and real versus mocked validation.
+
+Google sign-in is optional: configure `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_REDIRECT_URI` on the backend using [Google Cloud setup](docs/google-auth.md). The local callback is `http://localhost:3000/api/auth/google/callback`. Login/Register initiate Google's actual consent flow; Profile allows an authenticated password user to link Google explicitly. Matching email alone never links accounts, Google-only users have no fake password, and provider tokens are not stored. Preserve existing JWT/audit keys and account data. Public deployment requires HTTPS and callback query redaction at every proxy/logging layer. Password recovery remains unavailable.
 
 ## Choose a local launch mode
 
@@ -146,3 +156,5 @@ COMPOSE_BASE_URL=http://localhost:3000 node scripts/browser-compose.mjs
 ```
 
 See [testing.md](docs/testing.md) for database requirements, real versus mocked boundaries, dependency audits, isolated outage/recovery behavior, and exact sandbox commands. [phase7.md](docs/phase7.md) records measured results and unverified properties; no production-readiness claim is based on a skipped test.
+
+Current upgrade evidence and remaining release gates: [Phase 8 report](docs/phase8-completion.md).

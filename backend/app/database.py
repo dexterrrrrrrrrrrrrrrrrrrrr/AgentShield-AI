@@ -27,6 +27,13 @@ async def connect_database(settings: Settings):
         await client.admin.command("ping")
         db = client[settings.mongodb_database]
         await db.users.create_index("email", unique=True, name="unique_email")
+        await db.users.create_index(
+            "google_sub",
+            unique=True,
+            name="unique_google_subject",
+            partialFilterExpression={"google_sub": {"$type": "string"}},
+        )
+        await db.oauth_states.create_index("expires_at", expireAfterSeconds=0)
         await db.sessions.create_index(
             "expires_at", expireAfterSeconds=0, name="session_expiry"
         )
@@ -48,6 +55,9 @@ async def connect_database(settings: Settings):
             [("user_id", 1), ("created_at", -1), ("_id", -1)]
         )
         await db.execution_logs.create_index("expires_at", expireAfterSeconds=0)
+        await db.execution_logs.create_index(
+            [("user_id", 1), ("language", 1), ("created_at", -1), ("_id", -1)]
+        )
         await db.execution_logs.create_index(
             [("user_id", 1), ("approval_status", 1), ("decision_at", -1)]
         )

@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     register_ip_limit: int = Field(default=10, ge=1, le=100)
     rate_window_seconds: int = Field(default=300, ge=10, le=3600)
 
+    google_client_id: str = Field(default="", max_length=256)
+    google_client_secret: SecretStr = SecretStr("")
+    google_redirect_uri: str = Field(default="", max_length=2048)
+    oauth_start_limit: int = Field(default=15, ge=1, le=100)
+
     groq_api_key: SecretStr = SecretStr("")
     groq_model: str = Field(
         default="llama-3.1-8b-instant", min_length=1, max_length=100
@@ -51,6 +56,10 @@ class Settings(BaseSettings):
     monitor_pong_seconds: float = Field(default=35, ge=3, le=90)
     monitor_poll_seconds: float = Field(default=1, ge=0.05, le=5)
     sandbox_enabled: bool = False
+    sandbox_native_image: str = Field(default="", pattern=r"^(?:sha256:[a-f0-9]{64})?$")
+    sandbox_java_image: str = Field(default="", pattern=r"^(?:sha256:[a-f0-9]{64})?$")
+    sandbox_node_image: str = Field(default="", pattern=r"^(?:sha256:[a-f0-9]{64})?$")
+    sandbox_compile_timeout: int = Field(default=10, ge=1, le=30)
     sandbox_policy: Literal["deny", "approval", "allow"] = "approval"
     sandbox_docker_url: str = "unix:///var/run/docker.sock"
     sandbox_memory_mb: int = Field(default=128, ge=128, le=256)
@@ -188,4 +197,54 @@ class Settings(BaseSettings):
                 )
             if self.secure_cookies and parsed.scheme != "https":
                 raise ValueError("Production origins must use HTTPS")
+        return self
+
+    @property
+    def google_enabled(self) -> bool:
+        return bool(
+            self.google_client_id
+            and self.google_client_secret.get_secret_value()
+            and self.google_redirect_uri
+        )
+
+    @property
+    def oauth_cookie(self) -> str:
+        return (
+            "__Host-agentshield_oauth" if self.secure_cookies else "agentshield_oauth"
+        )
+
+    @model_validator(mode="after")
+    def google_configuration(self):
+        values = (
+            self.google_client_id,
+            self.google_client_secret.get_secret_value(),
+            self.google_redirect_uri,
+        )
+        if any(values) and not all(values):
+            raise ValueError(
+                "Configure all three Google OAuth settings, or leave all empty"
+            )
+        if not all(values):
+            return self
+        uri = urlparse(self.google_redirect_uri)
+        if (
+            uri.path != "/api/auth/google/callback"
+            or uri.query
+            or uri.fragment
+            or uri.username
+            or uri.password
+            or f"{uri.scheme}://{uri.netloc}" not in self.origins
+            or (
+                uri.scheme != "https"
+                and uri.hostname not in ("localhost", "127.0.0.1", "::1")
+            )
+            or not re.fullmatch(
+                r"[A-Za-z0-9_.-]+\.apps\.googleusercontent\.com", self.google_client_id
+            )
+            or len(values[1]) > 4096
+            or any(c.isspace() for c in values[1])
+        ):
+            raise ValueError(
+                "Google OAuth requires an exact frontend callback URI and valid client configuration"
+            )
         return self

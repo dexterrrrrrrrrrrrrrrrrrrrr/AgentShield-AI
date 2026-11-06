@@ -392,7 +392,7 @@ export default function Playground() {
           >
             {!messages.length && (
               <p className="py-10 text-center text-sm text-slate-400">
-                Start a task. Tools follow your allowlist; Python execution
+                Start a task. Tools follow your allowlist; code execution
                 requires verified sandbox isolation and policy approval.
               </p>
             )}
@@ -418,7 +418,7 @@ export default function Playground() {
                     <p className="mt-2 text-xs text-slate-400">
                       Review the exact request and approve or reject it in
                       Monitoring. Then continue this original turn; resolving
-                      never replays the Python code.
+                      never replays the code.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-4">
                       {m.pending_execution_ids?.map((id) => (
