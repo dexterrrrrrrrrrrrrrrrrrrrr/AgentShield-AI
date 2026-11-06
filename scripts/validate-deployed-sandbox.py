@@ -20,6 +20,8 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base-url',default='http://localhost:3000')
     parser.add_argument('--language',choices=list(PROGRAMS),default='python')
+    parser.add_argument('--policy', choices=['approval', 'auto'], default='approval',
+                        help='Expected policy; auto explicitly authorizes the fixed program without approval')
     args=parser.parse_args()
     base=httpx.URL(args.base_url)
     if base.scheme not in ('http','https') or base.host not in ('localhost','127.0.0.1','::1') or base.username or base.password or base.path not in ('','/') or base.query or base.fragment:
@@ -37,15 +39,32 @@ def main():
         request('/api/auth/register',dict(full_name='Executor Validation',email=email,password=password,confirm_password=password))
         request('/api/auth/login',dict(email=email,password=password))
         try:
+            metadata=request('/api/sandbox/languages')
+            expected='AUTO_EXECUTE' if args.policy=='auto' else 'REQUIRE_APPROVAL'
+            if metadata.get('execution_policy')!=expected:
+                raise RuntimeError('Unexpected sandbox policy; no program submitted')
             ready=request('/api/sandbox/readiness?language='+args.language)
             if not ready.get('ready'):
                 print(json.dumps({'status':'BLOCKED','language':args.language,'readiness':ready,'programs_executed':0},indent=2));return 2
             pending=request('/api/sandbox/execute',dict(language=args.language,source_code=PROGRAMS[args.language],stdin='validation\n',tool='execute_code'))
-            if pending['status']!='pending_approval': raise RuntimeError('Expected human approval policy')
             # Invocation explicitly authorizes only the fixed hello-world request.
-            result=request('/api/sandbox/approvals/'+pending['id'],dict(approve=True,request_hash=pending['request_hash']))
-            passed=result['status']=='completed' and result['stdout']=='hello\n' and result['exit_code']==0
-            print(json.dumps({'status':'PASS' if passed else 'FAIL','language':args.language,'execution_id':result['id'],'execution_status':result['status'],'compile_status':result.get('compile_status')},indent=2))
+            if args.policy=='approval':
+                if pending['status']!='pending_approval': raise RuntimeError('Expected human approval policy')
+                result=request('/api/sandbox/approvals/'+pending['id'],dict(approve=True,request_hash=pending['request_hash']))
+            else:
+                result=pending
+                if result.get('execution_policy')!='AUTO_EXECUTE': raise RuntimeError('Unexpected execution policy')
+            history=request('/api/sandbox/executions/'+result['id'])
+            events=request('/api/monitor/events')['events']
+            own=[event for event in events if event.get('execution_id')==result['id']]
+            expected_events={'policy_evaluation', 'sandbox_started', 'sandbox_completed'}
+            if args.policy=='approval': expected_events.add('tool_approved')
+            passed=(result['status']=='completed' and result['stdout']=='hello\n'
+                    and result['stderr']=='' and result['exit_code']==0
+                    and all(history.get(k)==result.get(k) for k in ('status','stdout','stderr','exit_code','language'))
+                    and expected_events <= {event['kind'] for event in own}
+                    and all(event.get('integrity')=='verified' for event in own))
+            print(json.dumps({'status':'PASS' if passed else 'FAIL','language':args.language,'policy':args.policy,'execution_id':result['id'],'execution_status':result['status'],'compile_status':result.get('compile_status')},indent=2))
             return 0 if passed else 1
         finally: request('/api/auth/logout',{})
 

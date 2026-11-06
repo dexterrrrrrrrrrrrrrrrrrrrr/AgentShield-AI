@@ -1,7 +1,10 @@
 # Opt-in trusted execution plane. No TCP listeners or Docker socket on backend.
 x-sandbox: &sandbox
   SANDBOX_ENABLED: "true"
-  SANDBOX_POLICY: approval
+  SANDBOX_POLICY: ${SANDBOX_POLICY:-approval}
+  SANDBOX_TRUSTED_LOCAL: ${SANDBOX_TRUSTED_LOCAL:-false}
+  APP_ENV: ${APP_ENV:-development}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
   SANDBOX_NATIVE_IMAGE: ${SANDBOX_NATIVE_IMAGE:?Provision native runtime image}
   SANDBOX_JAVA_IMAGE: ${SANDBOX_JAVA_IMAGE:?Provision Java runtime image}
   SANDBOX_NODE_IMAGE: ${SANDBOX_NODE_IMAGE:?Provision Node runtime image}

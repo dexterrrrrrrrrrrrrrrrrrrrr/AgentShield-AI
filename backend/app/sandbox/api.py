@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from ..security import current_identity, limit_attempts, require_csrf, utcnow
-from .policy import CodeRequest, limits
+from .policy import CodeRequest, limits, policy_name
 from .registry import LANGUAGES
 from .service import SandboxService
 
@@ -35,6 +35,7 @@ class Approval(BaseModel):
 async def languages(request: Request, identity=Depends(current_identity)):
     await limit_attempts(request, "sandbox_read", identity[0]["_id"], 60)
     return {
+        "execution_policy": policy_name(request.app.state.settings),
         "languages": [
             {
                 "id": entry.id,
