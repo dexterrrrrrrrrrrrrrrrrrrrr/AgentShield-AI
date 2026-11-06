@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
+import { StatusBadge } from "./ui";
 import { useSearchParams } from "next/navigation";
-import WorkspaceNav from "./workspace-nav";
 import { useSession } from "./session";
 import { sessionExpired } from "@/lib/protected-api";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -364,7 +364,6 @@ export default function Monitoring() {
     : [];
   return (
     <main className="mx-auto max-w-7xl px-5 py-8">
-      <WorkspaceNav />
       <header className="mt-5 flex flex-wrap items-center justify-between gap-4">
         <div>
           <p className="text-xs tracking-widest text-teal-300">
@@ -416,7 +415,7 @@ export default function Monitoring() {
           className="mt-6 h-20 rounded-xl bg-slate-900"
         />
       )}
-      <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-6">
+      <div className="mt-6 grid grid-cols-2 gap-3 xl:grid-cols-6">
         {cards.map(([label, value]) => (
           <section
             key={label}
@@ -599,15 +598,7 @@ export default function Monitoring() {
               className="rounded-lg bg-slate-900 px-4 py-3 text-sm"
             >
               <div className="flex flex-wrap justify-between gap-2">
-                <span
-                  className={
-                    e.severity === "warning"
-                      ? "text-amber-300"
-                      : "text-teal-300"
-                  }
-                >
-                  {e.kind.replaceAll("_", " ")}
-                </span>
+                <StatusBadge tone={e.kind.includes("failed") || e.kind.includes("rejected") ? "error" : e.severity === "warning" ? "warning" : e.kind.includes("completed") ? "success" : "info"}>{e.kind.replaceAll("_", " ")}</StatusBadge>
                 <time className="text-xs text-slate-500">
                   #{e.seq} · {new Date(e.timestamp).toISOString().slice(11, 19)}{" "}
                   UTC

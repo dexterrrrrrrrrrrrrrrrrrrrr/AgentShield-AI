@@ -79,11 +79,9 @@ class Providers:
                     default_headers={"Accept-Encoding": "identity"},
                     http_client=groq.DefaultAsyncHttpxClient(follow_redirects=False),
                 ) as client:
-                    # Explicit availability check; no silent model or provider fallback.
-                    async with client.models.with_streaming_response.retrieve(
-                        model
-                    ) as response:
-                        await read_bounded(response)
+                    # Completion is the authoritative availability check. A separate
+                    # model lookup can reject namespaced IDs and doubles API calls.
+                    # No model/provider fallback; keep the operator-selected model.
                     async with client.chat.completions.with_streaming_response.create(
                         model=model,
                         messages=messages,
@@ -144,17 +142,34 @@ class Providers:
             raise ProviderError(
                 "The model provider timed out. Please retry later.", 504
             ) from None
-        except groq.NotFoundError:
-            raise ProviderError(
-                "The selected Groq model is unavailable. Check GROQ_MODEL.", 422
-            ) from None
         except (groq.APIConnectionError, httpx.ConnectError):
             raise ProviderError(
                 "The model provider is unreachable. Check service availability.", 503
             ) from None
-        except groq.APIStatusError:
+        except groq.APIStatusError as exc:
+            # Only inspect stable error codes. Never return/log provider messages,
+            # request bodies, generated failed tool calls, or credentials.
+            body = exc.body if isinstance(exc.body, dict) else {}
+            error = body.get("error", body)
+            code = error.get("code") if isinstance(error, dict) else None
+            if code in ("model_not_found", "model_decommissioned"):
+                raise ProviderError(
+                    "The saved conversation model is unavailable to this account. "
+                    "Check the configured model and create a new conversation.", 422
+                ) from None
+            if exc.status_code == 404:
+                raise ProviderError("The Groq API endpoint is unavailable. Check provider configuration.", 502) from None
+            if exc.status_code in (400, 422):
+                message = (
+                    "Groq could not generate a valid tool call. Retry or simplify the task."
+                    if code == "tool_use_failed" else
+                    "Groq rejected the request format or parameters for this model. Check model/tool compatibility."
+                )
+                raise ProviderError(message, 422) from None
+            if exc.status_code == 403:
+                raise ProviderError("Groq denied access. Check the account's model permissions.", 503) from None
             raise ProviderError(
-                "Groq could not complete the request. Check model support and provider status."
+                "Groq could not complete the request due to a provider service error. Retry later.", 503
             ) from None
         except (
             httpx.HTTPError,
@@ -167,5 +182,5 @@ class Providers:
             AttributeError,
         ):
             raise ProviderError(
-                "The model provider returned an invalid or unavailable response."
+                "The model provider returned an invalid response. Please retry."
             ) from None

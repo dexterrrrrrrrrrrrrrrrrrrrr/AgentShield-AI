@@ -66,8 +66,8 @@ test("settings and tool configuration use real metadata, denied calls are audite
 }) => {
   await signIn(page);
   await page
-    .getByRole("navigation", { name: "Main navigation" })
-    .getByRole("button", { name: "Settings", exact: true })
+    .getByRole("navigation", { name: "Workspace navigation" })
+    .getByRole("link", { name: "Settings", exact: true })
     .click();
   await expect(page).toHaveURL(/\/settings$/);
   await expect(

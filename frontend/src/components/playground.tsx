@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import SafeMarkdown from "./safe-markdown";
 import {
   useCallback,
   useEffect,
@@ -8,7 +9,6 @@ import {
   type FormEvent,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import WorkspaceNav from "./workspace-nav";
 import { ApiError } from "@/lib/protected-api";
 import { agentApi } from "@/lib/agent-client";
 
@@ -209,7 +209,6 @@ export default function Playground() {
   }
   return (
     <main className="mx-auto max-w-6xl px-5 py-8">
-      <WorkspaceNav />
       <header className="my-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <p className="text-xs tracking-widest text-teal-300">
@@ -231,7 +230,7 @@ export default function Playground() {
                 : "Ready"}
         </p>
       </header>
-      <div className="grid gap-5 md:grid-cols-[220px_1fr]">
+      <div className="playground-grid">
         <aside
           aria-label="Conversations"
           className="rounded-xl border border-slate-800 bg-[#0d1422] p-4"
@@ -289,8 +288,9 @@ export default function Playground() {
             </button>
           )}
         </aside>
-        <section className="min-w-0 rounded-xl border border-slate-800 p-5">
-          <div className="flex flex-wrap items-end gap-4">
+        <section className="chat-surface">
+          <details open className="chat-settings"><summary>Provider, model & tool permissions</summary>
+          <div className="mt-4 flex flex-wrap items-end gap-4">
             <label className="text-sm">
               Provider
               <select
@@ -360,6 +360,8 @@ export default function Playground() {
               ))}
             </div>
           </fieldset>
+          </details>
+          {selected && current && selected.model !== current.model && <p className="mb-4 text-sm text-amber-200">This conversation uses saved model {selected.model}. New conversations use {current.model}. Create a new conversation to use the current deployment model.</p>}
           {current && !current.configured && (
             <p className="mt-4 text-sm text-amber-200">
               Groq is not configured. Add the API key securely to the backend
@@ -388,7 +390,7 @@ export default function Playground() {
           )}
           <div
             aria-label="Conversation history"
-            className="my-5 max-h-[55vh] space-y-4 overflow-auto rounded-lg bg-slate-950/60 p-4"
+            className="chat-history my-5 space-y-4 overflow-auto rounded p-4"
           >
             {!messages.length && (
               <p className="py-10 text-center text-sm text-slate-400">
@@ -401,15 +403,8 @@ export default function Playground() {
                 key={m.id}
                 className="space-y-3 border-b border-slate-800 pb-5"
               >
-                <p className="text-xs text-teal-300">You</p>
-                <p className="whitespace-pre-wrap break-words text-sm">
-                  {m.user_content}
-                </p>
-                <p className="text-xs text-slate-400">Assistant · {m.status}</p>
-                <p className="whitespace-pre-wrap break-words text-sm leading-6">
-                  {m.assistant_content ||
-                    "Execution interrupted. Retry this task."}
-                </p>
+                <div className="user-message"><p className="message-label">You</p><p className="whitespace-pre-wrap break-words text-sm">{m.user_content}</p></div>
+                <div className="assistant-message"><p className="message-label">Assistant · {m.status}</p><SafeMarkdown text={m.assistant_content || "Execution interrupted. Retry this task."} /></div>
                 {m.status === "awaiting_approval" && (
                   <section className="rounded border border-amber-800 bg-amber-950/20 p-4">
                     <h2 className="text-sm font-medium text-amber-200">
@@ -469,7 +464,7 @@ export default function Playground() {
               </article>
             ))}
           </div>
-          <form onSubmit={submit}>
+          <form onSubmit={submit} className="chat-composer">
             <label htmlFor="task" className="text-sm">
               Task or instructions
             </label>

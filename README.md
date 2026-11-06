@@ -167,3 +167,11 @@ Use `SANDBOX_POLICY=auto` with `SANDBOX_TRUSTED_LOCAL=true`, development mode an
 loopback origins to run direct code submissions without a manual approval step.
 Production defaults and agent approval workflows are preserved. See
 [configuration, existing Compose deployment commands and verification](docs/sandbox-auto-execution.md).
+
+### Dark Neo-Brutalist workspace and Groq adapter repair
+
+The shared responsive shell, all eight page designs, local typography, safe chat
+formatting and Groq error handling are described in
+[the redesign and Groq validation guide](docs/neo-brutalism-groq.md). It includes
+non-destructive rebuild commands for the existing `agentshield-ai-v7` deployment
+and clearly separates mocked tests from pending live provider verification.

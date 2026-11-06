@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { authPost, oauthErrorMessage } from "@/lib/auth-client";
 import GoogleButton from "./google-button";
+import { Icon } from "./ui";
 
 export default function AuthForm({ mode, oauthError }: { mode: "login" | "register"; oauthError?: string }) {
   const registering = mode === "register";
@@ -56,10 +57,10 @@ export default function AuthForm({ mode, oauthError }: { mode: "login" | "regist
   const inputClass =
     "mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white focus:border-teal-300 focus:outline-none";
   return (
-    <main className="flex min-h-screen items-center justify-center px-5 py-10">
-      <section className="w-full max-w-md rounded-2xl border border-slate-800 bg-[#0d1422] p-7 shadow-xl sm:p-9">
-        <Link href="/" className="text-lg font-bold tracking-tight">
-          ◈ AgentShield <span className="text-teal-300">AI</span>
+    <main className="auth-page flex min-h-screen items-center justify-center px-5 py-10">
+      <section className="auth-panel w-full max-w-md p-7 sm:p-9">
+        <Link href="/" className="brand">
+          <span className="brand-mark"><Icon name="shield" /></span> AgentShield <span className="brand-ai">/ AI</span>
         </Link>
         <p className="mt-8 text-xs font-semibold tracking-widest text-teal-400">
           SECURE WORKSPACE

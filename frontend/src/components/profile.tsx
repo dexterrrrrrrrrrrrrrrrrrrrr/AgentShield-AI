@@ -1,7 +1,6 @@
 "use client";
 import Image from "next/image";
-import WorkspaceNav from "@/components/workspace-nav";
-import { LogoutButton, useUser } from "@/components/session";
+import { useUser } from "@/components/session";
 import GoogleButton from "@/components/google-button";
 import { oauthErrorMessage } from "@/lib/auth-client";
 
@@ -27,8 +26,7 @@ export default function Profile({ oauthError, linked }: { oauthError?: string; l
     "password+google": "Email and password · Google",
   };
   return (
-    <main className="mx-auto max-w-2xl px-6 py-12">
-      <WorkspaceNav logout={false} />
+    <main className="mx-auto max-w-5xl px-6 py-12">
       <section className="mt-7 rounded-2xl border border-slate-800 bg-[#0d1422] p-7">
         <p className="text-xs font-semibold tracking-widest text-teal-300">YOUR ACCOUNT</p>
         <div className="mt-3 flex items-center gap-5">
@@ -47,7 +45,7 @@ export default function Profile({ oauthError, linked }: { oauthError?: string; l
         </div>
         {oauthError && <p role="alert" className="mt-5 rounded-lg border border-amber-800 p-3 text-sm text-amber-100">{oauthErrorMessage(oauthError)}</p>}
         {linked && user.google_connected && <p role="status" className="mt-5 rounded-lg border border-teal-800 p-3 text-sm text-teal-200">Google account connected successfully.</p>}
-        <dl className="my-8 space-y-6">
+        <dl className="profile-details my-8">
           {[
             ["Full name", user.full_name],
             ["Email", user.email],
@@ -70,7 +68,6 @@ export default function Profile({ oauthError, linked }: { oauthError?: string; l
             <p className="mt-3 text-xs leading-5 text-slate-400">Google is connected only after you authorize it while signed in to this account. Matching email addresses do not link accounts automatically.</p>
           </section>
         )}
-        <LogoutButton />
       </section>
     </main>
   );

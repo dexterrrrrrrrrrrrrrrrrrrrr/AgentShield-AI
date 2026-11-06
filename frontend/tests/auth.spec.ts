@@ -107,8 +107,8 @@ test("registration, password toggle, login, profile, preserved dashboard, mobile
     "agentshield_session",
   );
   await page
-    .getByRole("navigation", { name: "Main navigation" })
-    .getByRole("button", { name: "Settings", exact: true })
+    .getByRole("navigation", { name: "Workspace navigation" })
+    .getByRole("link", { name: "Settings", exact: true })
     .click();
   await expect(
     page.getByRole("heading", { name: "Workspace settings", exact: true }),
@@ -133,11 +133,13 @@ test("registration, password toggle, login, profile, preserved dashboard, mobile
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+  await page.getByRole("button", { name: "Open navigation" }).click();
   await page.getByRole("link", { name: /Browser Example · Profile/ }).click();
   await expect(page.getByRole("heading", { name: "Profile" })).toBeVisible();
   await expect(page.getByText(email, { exact: true })).toBeVisible();
   await expect(page.getByText("Authenticated", { exact: true })).toBeVisible();
   await expect(page.getByText(/\d{4}-\d{2}-\d{2} \(UTC\)/)).toBeVisible();
+  await page.getByRole("button", { name: "Open navigation" }).click();
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/login$/);
   expect((await page.request.get("/api/auth/me")).status()).toBe(401);

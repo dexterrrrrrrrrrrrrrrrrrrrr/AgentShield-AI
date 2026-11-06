@@ -1,6 +1,6 @@
 "use client";
-import WorkspaceNav from "./workspace-nav";
 import CodeEditor from "./code-editor";
+import { StatusBadge } from "./ui";
 import { protectedApi } from "@/lib/protected-api";
 import { languageName, registeredLanguage, STARTER_CODE, type LanguageId } from "@/lib/languages";
 import { useEffect, useState } from "react";
@@ -74,13 +74,14 @@ export default function Sandbox() {
   const inputBytes = new TextEncoder().encode(stdin).length;
   return (
     <main className="mx-auto max-w-6xl px-5 py-8">
-      <WorkspaceNav />
+      <p className="eyebrow">EXECUTION / ISOLATED RUNTIME</p>
       <h1 className="mt-5 text-3xl font-semibold">Code Sandbox</h1>
       <p className="mt-3 text-sm text-slate-400">{executionPolicy === "AUTO_EXECUTE" ? "Trusted local automatic execution. Run Code starts an isolated job without an approval step." : "Isolated code execution with deterministic policy and explicit approvals."} Compilation stays inside the sandbox. Never enter secrets.</p>
       <p role="status" className="mt-5 rounded-lg border border-slate-700 p-4 text-sm">
         {checking ? `Checking ${languageName(language)} sandbox isolation…` : busy ? "Running..." : ready ? `${languageName(language)} sandbox readiness checks passed` : "SANDBOX_UNAVAILABLE · Execution is disabled until effective isolation checks pass."}
         {!checking && !ready && readinessMessage && <span className="mt-2 block text-slate-400">{readinessMessage}</span>}
       </p>
+      <div className="mt-3"><StatusBadge>{executionPolicy === "AUTO_EXECUTE" ? "AUTO_EXECUTE · trusted local" : executionPolicy.replaceAll("_", " ")}</StatusBadge></div>
       <button disabled={busy || checking} onClick={() => { setChecking(true); setReady(false); setAttempt((value) => value + 1); }} className={`mt-3 ${smallButton}`}>Refresh sandbox status</button>
       {error && <p role="alert" className="mt-4 text-red-300">{error}</p>}
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_240px]">
@@ -101,9 +102,9 @@ export default function Sandbox() {
             <button disabled={busy || checking || !ready || executionPolicy === "DENY" || !configuration || bytes > 32768 || inputBytes > 8192 || !code.trim()} onClick={() => perform(() => api("/execute", { language, source_code: code, stdin, tool: "execute_code" }))} className="rounded-lg bg-teal-300 px-5 py-3 font-semibold text-slate-950 disabled:opacity-40">{busy ? "Running..." : "Run Code"}</button>
             <button disabled={busy || !selected} onClick={() => setSelected(null)} className={smallButton}>Clear Output</button>
           </div>
-          {selected && <article className="mt-6 space-y-4 rounded-xl border border-slate-800 p-5">
+          {selected && <article className="terminal-panel mt-6 space-y-4 rounded-xl border border-slate-800 p-5">
             <h2 className="text-lg">Execution {selected.id.slice(0, 8)} · {languageName(selected.language)}</h2>
-            <p>Status: {selected.status} · Policy: {selected.policy_decision}</p>
+            <p><StatusBadge tone={selected.status === "completed" ? "success" : selected.status === "pending_approval" ? "warning" : "error"}>Status: {selected.status}</StatusBadge> · Policy: {selected.policy_decision}</p>
             {executionPolicy === "AUTO_EXECUTE" && selected.status === "pending_approval" && <p className="text-sm text-amber-300">This older request was not executed automatically. Review it in Monitoring or submit a new request.</p>}
             {selected.error_category && <p role="alert">{selected.error_category}</p>}
             <p className="text-sm">Exit code: {selected.exit_code ?? "—"} · Duration: {selected.execution_duration_ms != null ? `${selected.execution_duration_ms} ms` : selected.duration != null ? `${selected.duration} seconds` : "—"} · Compilation: {selected.compile_status || "not_required"}</p>

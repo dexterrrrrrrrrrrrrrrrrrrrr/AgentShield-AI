@@ -27,6 +27,8 @@ class BrowserProvider:
                     )
                 ]
             )
+        if user == "markdown ui fixture":
+            return Reply(content='**Example**\n\n```python\nprint("hello")\n```\n\n<img src=x onerror=alert(1)>')
         if user.startswith("<img"):
             return Reply(
                 content='<svg onload="document.body.dataset.phase6Attack=1">untrusted model output</svg>'

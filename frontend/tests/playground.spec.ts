@@ -33,7 +33,7 @@ test("playground tool run, persisted history, errors, retry, clearing and mobile
   ).toBeVisible();
   await page
     .getByRole("navigation")
-    .getByRole("button", { name: "Agent Playground", exact: true })
+    .getByRole("link", { name: "Playground", exact: true })
     .click();
   await expect(page).toHaveURL(/\/playground$/);
   await page.route("**/api/agent/sessions/*/messages", async (route) => {

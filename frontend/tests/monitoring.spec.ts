@@ -38,7 +38,7 @@ test("real WebSocket monitoring, stored analytics, authorized approval rejection
   ).toBeVisible();
   await page
     .getByRole("navigation")
-    .getByRole("button", { name: "Security Monitoring", exact: true })
+    .getByRole("link", { name: "Monitoring", exact: true })
     .click();
   await expect(page).toHaveURL(/\/monitoring$/);
   await expect(page.getByRole("status")).toHaveText("Live");
