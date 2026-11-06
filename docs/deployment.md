@@ -1,5 +1,7 @@
 # Local deployment and production responsibilities
 
+This guide describes the default sandbox-disabled stack. For opt-in Compose sandbox execution through an isolated trusted service, use [the dedicated executor guide](sandbox-executor.md). The public backend still receives no Docker socket.
+
 The Compose stack launches the real frontend, backend, and authenticated MongoDB 7. It does not use fake AI responses, disable authentication, or provide an unisolated execution fallback. It publishes only the frontend on loopback. This is a local deployment baseline; public HTTPS termination, operator secrets, backups, monitoring, and stronger hostile-code isolation remain deployment responsibilities.
 
 ## Deployment modes

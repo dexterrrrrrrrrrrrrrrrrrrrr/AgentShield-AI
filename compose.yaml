@@ -36,6 +36,7 @@ services:
     image: agentshield-backend:phase7
     build:
       context: ./backend
+      target: runtime
     environment:
       APP_ENV: ${APP_ENV:-development}
       JWT_SECRET: ${JWT_SECRET:?Preserve or generate a JWT secret in an ignored env file}

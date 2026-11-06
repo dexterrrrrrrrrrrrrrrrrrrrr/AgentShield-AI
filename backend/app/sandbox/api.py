@@ -50,6 +50,7 @@ async def languages(request: Request, identity=Depends(current_identity)):
 
 
 READINESS_MESSAGES = {
+    "EXECUTOR_UNAVAILABLE": "The execution service is unavailable or could not verify the request. Check its health, private socket and shared configuration.",
     "DISABLED": "Sandbox execution is disabled. Enable it only on a trusted host after local isolation validation.",
     "RECOVERY_REQUIRED": "An interrupted execution requires operator recovery and a new isolation validation before execution can resume.",
     "BUSY": "The sandbox is busy. Wait for the current execution to finish, then check again.",
