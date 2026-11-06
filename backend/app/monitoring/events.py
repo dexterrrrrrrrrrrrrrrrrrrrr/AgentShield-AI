@@ -25,7 +25,13 @@ KINDS = {
     "agent_completed",
     "agent_failed",
 }
-TOOLS = {"calculator", "summarize_text", "format_json", "python_sandbox"}
+TOOLS = {
+    "calculator",
+    "summarize_text",
+    "format_json",
+    "python_sandbox",
+    "execute_code",
+}
 DECISIONS = {"ALLOW", "DENY", "REQUIRE_APPROVAL"}
 RESULTS = {
     "running",
@@ -67,6 +73,8 @@ class Monitor:
         decision=None,
         result=None,
         duration=None,
+        language=None,
+        compile_status=None,
     ):
         if kind not in KINDS:
             raise ValueError("Unknown monitoring event")
@@ -111,6 +119,23 @@ class Monitor:
             if duration is not None
             else None,
         }
+        if language is not None:
+            from ..sandbox.registry import LANGUAGES
+
+            if language not in LANGUAGES:
+                raise ValueError("Invalid event language")
+            event["language"] = language
+        if compile_status is not None:
+            if compile_status not in {
+                "not_required",
+                "pending",
+                "completed",
+                "failed",
+                "timed_out",
+                "output_limit",
+            }:
+                raise ValueError("Invalid compilation status")
+            event["compile_status"] = compile_status
         # CAS binds the signed sequence to the atomic bounded append. No transaction
         # or replica-set requirement; concurrent writers retry without skipping IDs.
         for _ in range(32):
@@ -208,6 +233,8 @@ class Monitor:
             "policy_decision",
             "execution_result",
             "duration",
+            "language",
+            "compile_status",
             "seq",
         }
         return {

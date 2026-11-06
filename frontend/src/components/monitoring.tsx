@@ -5,6 +5,7 @@ import WorkspaceNav from "./workspace-nav";
 import { useSession } from "./session";
 import { sessionExpired } from "@/lib/protected-api";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { languageName } from "@/lib/languages";
 import { monitoringApi } from "@/lib/monitor-client";
 
 type Event = {
@@ -51,7 +52,7 @@ type Review = {
   agent_session_id: string | null;
   limits: Record<string, number>;
   status: string;
-  approval_request?: { code: string };
+  approval_request?: { code: string; language?: string; stdin?: string };
 };
 
 export default function Monitoring() {
@@ -544,10 +545,12 @@ export default function Monitoring() {
             Agent: {review.agent_session_id || "Manual execution"} · Execution:{" "}
             {review.id}
           </p>
+          {review.approval_request && <p className="mt-3 text-sm">Language: {languageName(review.approval_request.language)}</p>}
           <pre className="mt-4 max-h-64 overflow-auto whitespace-pre-wrap break-words bg-slate-950 p-4 text-xs">
             {review.approval_request?.code ||
               "This approval is no longer pending."}
           </pre>
+          {review.approval_request && <><h3 className="mt-3 text-sm">Standard input</h3><pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words text-xs">{review.approval_request.stdin || "(empty)"}</pre></>}
           <p className="mt-3 break-all text-xs text-slate-500">
             Request hash: {review.request_hash}
           </p>

@@ -39,12 +39,23 @@ class SandboxService:
                 409, "Approval is invalid; submit a new request"
             ) from None
         self.validate_code(payload.code)
+        self.validate_code(payload.stdin)
         return payload
+
+    async def ready(self, language):
+        # Preserve the legacy Python adapter protocol for existing integrations.
+        if language == "python":
+            return await self.manager.readiness()
+        return await self.manager.readiness(language=language)
 
     async def owned(self, uid, payload):
         return not payload.agent_session_id or bool(
             await self.db.agent_sessions.find_one(
-                {"_id": payload.agent_session_id, "user_id": uid}
+                {
+                    "_id": payload.agent_session_id,
+                    "user_id": uid,
+                    "allowed_tools": payload.tool,
+                }
             )
         )
 
@@ -70,13 +81,14 @@ class SandboxService:
         s = self.s
         # Known credentials must not enter stored approval requests or Docker Cmd.
         self.validate_code(payload.code)
+        self.validate_code(payload.stdin)
         blocked = await self.db.sandbox_locks.find_one(
             {"_id": "execution", "blocked": True}
         )
         available = (
             {"ready": False, "code": "SANDBOX_UNAVAILABLE"}
             if blocked
-            else await self.manager.readiness()
+            else await self.ready(payload.language)
         )
         decision = evaluate(
             authenticated=bool(uid),
@@ -98,6 +110,13 @@ class SandboxService:
             "agent_session_id": payload.agent_session_id,
             "agent_turn_id": self.agent_turn_id,
             "tool": payload.tool,
+            "language": payload.language,
+            "compile_status": "not_required"
+            if payload.language in ("python", "javascript")
+            else "pending",
+            "compile_stdout": "",
+            "compile_stderr": "",
+            "execution_duration_ms": None,
             "policy_decision": str(decision),
             "request_hash": digest,
             "status": "pending_approval"
@@ -111,7 +130,7 @@ class SandboxService:
             "exit_code": None,
             "stdout": "",
             "stderr": "",
-            "limits": limits(s),
+            "limits": limits(s, payload.language),
             "error_category": None,
             "expires_at": now + timedelta(days=s.sandbox_retention_days),
         }
@@ -124,6 +143,7 @@ class SandboxService:
             agent_id=payload.agent_session_id,
             execution_id=eid,
             tool=payload.tool,
+            language=payload.language,
             decision=str(decision),
             result=item["status"],
         )
@@ -134,6 +154,7 @@ class SandboxService:
                 agent_id=payload.agent_session_id,
                 execution_id=eid,
                 tool=payload.tool,
+                language=payload.language,
                 decision="DENY",
                 result=item["status"],
             )
@@ -164,6 +185,7 @@ class SandboxService:
                 agent_id=payload.agent_session_id,
                 execution_id=eid,
                 tool=payload.tool,
+                language=payload.language,
                 decision="REQUIRE_APPROVAL",
                 result="pending_approval",
             )
@@ -192,7 +214,7 @@ class SandboxService:
             raise HTTPException(404, "Agent session not found")
         if (
             self.s.sandbox_policy == "deny"
-            or not (await self.manager.readiness())["ready"]
+            or not (await self.ready(payload.language))["ready"]
         ):
             raise HTTPException(503, "SANDBOX_UNAVAILABLE")
         used = await self.db.sandbox_approvals.find_one_and_update(
@@ -230,6 +252,7 @@ class SandboxService:
             agent_id=payload.agent_session_id,
             execution_id=eid,
             tool=payload.tool,
+            language=payload.language,
             decision="ALLOW",
             result="queued",
         )
@@ -260,19 +283,27 @@ class SandboxService:
                     agent_id=payload.agent_session_id,
                     execution_id=eid,
                     tool=payload.tool,
+                    language=payload.language,
                     decision="ALLOW",
                     result="running",
                 )
                 if self.authorize is not None:
                     await self.authorize()
                 self.validate_code(payload.code)
+                self.validate_code(payload.stdin)
                 if (
                     not await self.owned(uid, payload)
                     or not self.s.sandbox_enabled
                     or self.s.sandbox_policy == "deny"
                 ):
                     raise HTTPException(403, "Sandbox authorization failed")
-                result = await self.manager.execute(payload.code)
+                result = (
+                    await self.manager.execute(payload.code)
+                    if payload.language == "python" and not payload.stdin
+                    else await self.manager.execute(
+                        payload.code, language=payload.language, stdin=payload.stdin
+                    )
+                )
             except HTTPException as exc:
                 authorization_failure = exc
                 result = {
@@ -296,6 +327,7 @@ class SandboxService:
                     agent_id=payload.agent_session_id,
                     execution_id=eid,
                     tool=payload.tool,
+                    language=payload.language,
                     decision="ALLOW",
                     result="interrupted",
                 )
@@ -317,9 +349,11 @@ class SandboxService:
                     {"_id": "execution", "holder": eid},
                     {"$set": {"until": utcnow()}, "$unset": {"holder": ""}},
                 )
-        for key in ("stdout", "stderr"):
+        for key in ("stdout", "stderr", "compile_stdout", "compile_stderr"):
             if key in result:
                 result[key] = redact_credentials(result[key], credential_values(self.s))
+        if result.get("duration") is not None and "execution_duration_ms" not in result:
+            result["execution_duration_ms"] = round(result["duration"] * 1000)
         result["completed_at"] = utcnow()
         item = await self.db.execution_logs.find_one_and_update(
             {"_id": eid, "user_id": uid},
@@ -332,9 +366,11 @@ class SandboxService:
             agent_id=payload.agent_session_id,
             execution_id=eid,
             tool=payload.tool,
+            language=payload.language,
             decision="ALLOW",
             result=item["status"],
             duration=item.get("duration"),
+            compile_status=item.get("compile_status"),
         )
         if authorization_failure is not None:
             raise authorization_failure
@@ -373,7 +409,8 @@ class SandboxService:
             "tool_rejected",
             agent_id=item.get("agent_session_id"),
             execution_id=eid,
-            tool="python_sandbox",
+            tool=item.get("tool", "python_sandbox"),
+            language=item.get("language", "python"),
             decision="DENY",
             result="rejected",
         )
@@ -383,6 +420,17 @@ class SandboxService:
     def public(item, settings=None):
         result = {
             "id": item["_id"],
+            "execution_id": item["_id"],
+            "language": item.get("language", "python"),
+            "compile_status": item.get("compile_status", "not_required"),
+            "compile_stdout": item.get("compile_stdout", ""),
+            "compile_stderr": item.get("compile_stderr", ""),
+            "execution_duration_ms": item.get(
+                "execution_duration_ms",
+                round(item["duration"] * 1000)
+                if item.get("duration") is not None
+                else None,
+            ),
             **{
                 k: v
                 for k, v in item.items()
@@ -390,7 +438,7 @@ class SandboxService:
             },
         }
         if settings:
-            for key in ("stdout", "stderr"):
+            for key in ("stdout", "stderr", "compile_stdout", "compile_stderr"):
                 if key in result:
                     result[key] = redact_credentials(
                         result[key], credential_values(settings)

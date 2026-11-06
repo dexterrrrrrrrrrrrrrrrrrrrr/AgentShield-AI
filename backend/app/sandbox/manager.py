@@ -6,6 +6,7 @@ forwarding. A future microVM adapter can implement readiness()/execute().
 
 import asyncio
 import json
+import logging
 import struct
 import time
 import uuid
@@ -13,7 +14,7 @@ import uuid
 import docker
 from docker.types import LogConfig, Ulimit
 
-from .policy import IMAGE
+from .registry import PYTHON_IMAGE as IMAGE, RUNTIME_REVISION, get_language, image_for
 from .readiness import supports_v2_probe
 
 # Fixed trusted probe only, not model/user-controlled. Namespaced cgroup-v2
@@ -52,14 +53,15 @@ class DockerAdapter:
     def __init__(self, settings, factory=None):
         self.s = settings
         self.last_probe = None
+        self.last_diagnostic = "NOT_CHECKED"
         self.factory = factory or (
             lambda: docker.DockerClient(base_url=settings.sandbox_docker_url, timeout=2)
         )
 
-    def options(self):
+    def options(self, language="python"):
         s = self.s
         return dict(
-            image=IMAGE,
+            image=image_for(s, language),
             user="65534:65534",
             working_dir="/tmp",
             privileged=False,
@@ -88,6 +90,49 @@ class DockerAdapter:
             labels={"agentshield.sandbox": "true"},
             name="agentshield-sandbox-" + uuid.uuid4().hex,
         )
+
+    def verify_container(self, container):
+        # Inspect before starting: no host mounts/namespaces or unexpected env.
+        container.reload()
+        cfg = container.attrs
+        host = cfg["HostConfig"]
+        if (
+            cfg["Config"]["User"] != "65534:65534"
+            or not host["ReadonlyRootfs"]
+            or host["Privileged"]
+            or host["NetworkMode"] != "none"
+            or host.get("PidMode")
+            or host.get("CgroupnsMode") != "private"
+            or host.get("CapAdd")
+            or host.get("MemorySwap") != self.s.sandbox_memory_mb * 1048576
+            or host.get("IpcMode") != "private"
+            or host.get("Binds")
+            or any(
+                m.get("Type") != "tmpfs" or m.get("Destination") != "/tmp"
+                for m in cfg.get("Mounts", [])
+            )
+            or "ALL" not in host["CapDrop"]
+            or host["Memory"] != self.s.sandbox_memory_mb * 1048576
+            or host["PidsLimit"] != self.s.sandbox_pids
+            or host["NanoCpus"] != int(self.s.sandbox_cpus * 1e9)
+            or not any(
+                x in ("no-new-privileges", "no-new-privileges:true")
+                for x in host["SecurityOpt"]
+            )
+            or any(
+                "=" in e
+                and e.split("=", 1)[0]
+                not in {
+                    "PATH",
+                    "LANG",
+                    "PYTHON_VERSION",
+                    "PYTHON_SHA256",
+                    "GPG_KEY",
+                }
+                for e in cfg["Config"].get("Env", [])
+            )
+        ):
+            raise Unavailable("Container restrictions could not be verified")
 
     @staticmethod
     def _frames(sock, cap, deadline, container):
@@ -124,14 +169,18 @@ class DockerAdapter:
                     return output, truncated, False
         return output, truncated, False
 
-    def _run(self, client, code, probe=False):
+    def _run(self, client, code, probe=False, language="python"):
         container = None
         sock = None
         started = time.monotonic()
         try:
-            opts = self.options()
+            opts = self.options(language)
+            probe_code = PROBE
+            if probe and language != "python":
+                entry = get_language(language)
+                probe_code = CHECK + "\nimport subprocess\nv['runtime_version']=subprocess.run(" + repr(list(entry.version_command)) + ",capture_output=True,text=True,timeout=3,check=True).stdout.strip()\nprint(json.dumps(v))"
             command = (
-                ["python", "-I", "-u", "-c", PROBE]
+                ["python", "-I", "-u", "-c", probe_code]
                 if probe
                 else [
                     "python",
@@ -155,47 +204,7 @@ class DockerAdapter:
                 use_config_proxy=False,
                 **opts,
             )
-            # Inspect before starting: no host mounts/namespaces or unexpected env.
-            container.reload()
-            cfg = container.attrs
-            host = cfg["HostConfig"]
-            if (
-                cfg["Config"]["User"] != "65534:65534"
-                or not host["ReadonlyRootfs"]
-                or host["Privileged"]
-                or host["NetworkMode"] != "none"
-                or host.get("PidMode")
-                or host.get("CgroupnsMode") != "private"
-                or host.get("CapAdd")
-                or host.get("MemorySwap") != self.s.sandbox_memory_mb * 1048576
-                or host.get("IpcMode") != "private"
-                or host.get("Binds")
-                or any(
-                    m.get("Type") != "tmpfs" or m.get("Destination") != "/tmp"
-                    for m in cfg.get("Mounts", [])
-                )
-                or "ALL" not in host["CapDrop"]
-                or host["Memory"] != self.s.sandbox_memory_mb * 1048576
-                or host["PidsLimit"] != self.s.sandbox_pids
-                or host["NanoCpus"] != int(self.s.sandbox_cpus * 1e9)
-                or not any(
-                    x in ("no-new-privileges", "no-new-privileges:true")
-                    for x in host["SecurityOpt"]
-                )
-                or any(
-                    "=" in e
-                    and e.split("=", 1)[0]
-                    not in {
-                        "PATH",
-                        "LANG",
-                        "PYTHON_VERSION",
-                        "PYTHON_SHA256",
-                        "GPG_KEY",
-                    }
-                    for e in cfg["Config"].get("Env", [])
-                )
-            ):
-                raise Unavailable("Container restrictions could not be verified")
+            self.verify_container(container)
             sock = container.attach_socket(
                 params={"stdout": True, "stderr": True, "stream": True}
             )
@@ -245,55 +254,73 @@ class DockerAdapter:
                 if container is not None:
                     container.remove(force=True, v=True)
 
-    def readiness(self):
+    def valid_probe(self, v):
+        try:
+            quota, period = map(int, v["cpu"].split())
+            return (v["cgroup_path"] == "/" and v["uid"] == 65534
+                    and int(v["memory"]) == self.s.sandbox_memory_mb * 1048576
+                    and int(v["swap"]) == 0 and int(v["pids"]) == self.s.sandbox_pids
+                    and quota > 0 and period > 0 and quota / period <= self.s.sandbox_cpus + 0.001
+                    and all(v[k] for k in ("ro", "workspace", "network", "nnp", "caps", "seccomp")))
+        except (ValueError, KeyError, TypeError, ZeroDivisionError):
+            return False
+
+    def readiness(self, language="python"):
         self.last_probe = None
+        self.last_diagnostic = "DOCKER_UNAVAILABLE"
         client = None
         try:
+            entry = get_language(language)
+            self.last_diagnostic = "RUNTIME_NOT_PROVISIONED"
+            selected_image = image_for(self.s, language)
+            self.last_diagnostic = "DOCKER_UNAVAILABLE"
             client = self.factory()
             info = client.info()
+            self.last_diagnostic = "CGROUP_V2_UNAVAILABLE"
             if not supports_v2_probe(info):
                 raise Unavailable("A supported cgroup-v2 namespace is required")
-            if client.containers.list(
-                all=True, filters={"label": "agentshield.sandbox=true"}
-            ):
-                raise Unavailable(
-                    "Existing sandbox containers require operator recovery"
-                )
-            client.images.get(IMAGE)  # No auto-pull and no user-selected image.
-            result = self._run(client, PROBE, probe=True)
+            self.last_diagnostic = "ORPHANED_CONTAINERS"
+            if client.containers.list(all=True, filters={"label": "agentshield.sandbox=true"}):
+                raise Unavailable("Existing sandbox containers require operator recovery")
+            self.last_diagnostic = "RUNTIME_IMAGE_UNAVAILABLE"
+            image = client.images.get(selected_image)  # Never auto-pull.
+            if language != "python":
+                self.last_diagnostic = "RUNTIME_IMAGE_MISMATCH"
+                labels = image.attrs.get("Config", {}).get("Labels", {}) or {}
+                if image.id != selected_image or labels.get("org.agentshield.runtime.family") != entry.family or labels.get("org.agentshield.runtime.revision") != RUNTIME_REVISION:
+                    raise Unavailable("Runtime image identity does not match")
+            self.last_diagnostic = "EFFECTIVE_ISOLATION_MISMATCH"
+            result = self._run(client, PROBE, probe=True) if language == "python" else self._run(client, PROBE, probe=True, language=language)
             v = json.loads(result["stdout"])
             self.last_probe = v
-            quota, period = map(int, v["cpu"].split())
-            if (
-                result["status"] != "completed"
-                or v["cgroup_path"] != "/"
-                or v["uid"] != 65534
-                or int(v["memory"]) != self.s.sandbox_memory_mb * 1048576
-                or int(v["swap"]) != 0
-                or int(v["pids"]) != self.s.sandbox_pids
-                or quota <= 0
-                or period <= 0
-                or quota / period > self.s.sandbox_cpus + 0.001
-                or not all(
-                    v[k]
-                    for k in ("ro", "workspace", "network", "nnp", "caps", "seccomp")
-                )
-            ):
+            if result["status"] != "completed" or not self.valid_probe(v):
                 raise Unavailable("Effective isolation limits do not match")
+            if language != "python" and v.get("runtime_version") != entry.version_prefix:
+                self.last_diagnostic = "RUNTIME_VERSION_MISMATCH"
+                raise Unavailable("Runtime version does not match")
+            self.last_diagnostic = "READY"
             return {"ready": True, "code": "READY"}
         except Exception:
+            # Fixed diagnostic category only: never exception bodies, code, env or paths.
+            logging.getLogger(__name__).warning("Sandbox readiness failed: %s", self.last_diagnostic)
             return {"ready": False, "code": "SANDBOX_UNAVAILABLE"}
         finally:
             if client is not None:
                 client.close()
 
-    def execute(self, code):
+    def execute(self, code, language="python", stdin=""):
         # Revalidate immediately before each execution. Never cache readiness.
-        if not self.readiness()["ready"]:
+        ready = self.readiness() if language == "python" else self.readiness(language)
+        if not ready["ready"]:
             raise Unavailable("SANDBOX_UNAVAILABLE")
         client = self.factory()
         try:
-            result = self._run(client, code)
+            if language == "python" and not stdin:
+                result = self._run(client, code)
+                result.update(language="python", compile_status="not_required", compile_stdout="", compile_stderr="", execution_duration_ms=round(result["duration"]*1000))
+            else:
+                from .multilang import run_job
+                result = run_job(self, client, language, code, stdin)
             if result["exit_code"] == 125:
                 raise Unavailable("SANDBOX_UNAVAILABLE")
             return result
@@ -324,26 +351,26 @@ class SandboxManager:
         except BaseException:
             self.failed = True
 
-    async def readiness(self):
+    async def readiness(self, language="python"):
         if not self.s.sandbox_enabled or self.failed:
             return {"ready": False, "code": "SANDBOX_UNAVAILABLE"}
         if self.lock.locked():
             return {"ready": False, "code": "SANDBOX_UNAVAILABLE"}
         async with self.lock:
-            task = asyncio.create_task(asyncio.to_thread(self.adapter.readiness))
+            task = asyncio.create_task(asyncio.to_thread(self.adapter.readiness) if language == "python" else asyncio.to_thread(self.adapter.readiness, language=language))
             try:
                 return await asyncio.shield(task)
             except asyncio.CancelledError:
                 await self._drain(task)
                 raise
 
-    async def execute(self, code):
+    async def execute(self, code, language="python", stdin=""):
         if not self.s.sandbox_enabled or self.failed:
             raise Unavailable("SANDBOX_UNAVAILABLE")
         if self.lock.locked():
             raise Unavailable("SANDBOX_BUSY")
         async with self.lock:
-            task = asyncio.create_task(asyncio.to_thread(self.adapter.execute, code))
+            task = asyncio.create_task(asyncio.to_thread(self.adapter.execute, code) if language == "python" and not stdin else asyncio.to_thread(self.adapter.execute, code, language=language, stdin=stdin))
             try:
                 return await asyncio.shield(task)
             except asyncio.CancelledError:

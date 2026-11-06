@@ -54,6 +54,11 @@ class UserResponse(BaseModel):
     created_at: datetime
     authenticated: bool = True
     session_expires_at: datetime | None = None
+    email_verified: bool = False
+    profile_picture: str | None = None
+    authentication_provider: str = "password"
+    google_connected: bool = False
+    last_login_at: datetime | None = None
 
 
 def public_user(
@@ -66,4 +71,13 @@ def public_user(
         created_at=user["created_at"],
         authenticated=authenticated,
         session_expires_at=session_expires_at,
+        email_verified=bool(user.get("email_verified", False)),
+        profile_picture=user.get("profile_picture"),
+        authentication_provider=(
+            "password+google" if user.get("password_hash") else "google"
+        )
+        if user.get("google_sub")
+        else "password",
+        google_connected=bool(user.get("google_sub")),
+        last_login_at=user.get("last_login_at"),
     )

@@ -38,6 +38,7 @@ def credential_values(settings):
     values = [
         settings.jwt_secret.get_secret_value(),
         settings.groq_api_key.get_secret_value(),
+        settings.google_client_secret.get_secret_value(),
         settings.audit_signing_key.get_secret_value(),
         uri,
     ]

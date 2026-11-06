@@ -11,3 +11,7 @@ groq==1.7.0
 langgraph==1.2.19
 
 docker==7.1.0
+
+# OIDC RS256 verification and bounded fixed-endpoint HTTP requests.
+cryptography==50.0.2
+httpx==0.28.1

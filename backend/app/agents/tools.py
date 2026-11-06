@@ -9,8 +9,15 @@ import re
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..guards import strict_json
+from ..sandbox.policy import CodeRequest
 
-NAMES = ("calculator", "summarize_text", "format_json", "python_sandbox")
+NAMES = (
+    "calculator",
+    "summarize_text",
+    "format_json",
+    "python_sandbox",
+    "execute_code",
+)
 
 
 class TextInput(BaseModel):
@@ -45,10 +52,31 @@ class PythonInput(BaseModel):
         return value
 
 
+class ExecuteCodeInput(PythonInput):
+    language: str
+    stdin: str = Field(default="", max_length=8192)
+
+    @field_validator("language")
+    @classmethod
+    def registered_language(cls, value):
+        return CodeRequest.registered_language(value)
+
+    @field_validator("stdin")
+    @classmethod
+    def bounded_stdin(cls, value):
+        return CodeRequest.stdin_bytes(value)
+
+
 def validate_request(request, allowed):
     if request.name not in NAMES or request.name not in allowed:
         raise ToolRejected("Tool is unknown or not permitted")
-    model = PythonInput if request.name == "python_sandbox" else TextInput
+    model = (
+        ExecuteCodeInput
+        if request.name == "execute_code"
+        else PythonInput
+        if request.name == "python_sandbox"
+        else TextInput
+    )
     return model.model_validate(request.arguments)
 
 
@@ -90,7 +118,7 @@ def calculate(text: str) -> str:
 def execute(request: ToolRequest, allowed: list[str]) -> str:
     if request.name not in NAMES or request.name not in allowed:
         raise ToolRejected("Tool is unknown or not permitted")
-    if request.name == "python_sandbox":
+    if request.name in ("python_sandbox", "execute_code"):
         raise ToolRejected("Sandbox requires authenticated async policy dispatch")
     data = TextInput.model_validate(request.arguments)
     try:
@@ -124,9 +152,12 @@ def definitions(allowed: list[str]) -> list[dict]:
                     "summarize_text": "Extract the first three sentences of supplied text locally.",
                     "format_json": "Validate and pretty-print supplied JSON text.",
                     "python_sandbox": "Request isolated Python execution. Policy may require explicit human approval; never assume it ran.",
+                    "execute_code": "Request isolated execution in an approved language. Policy and human approval apply; never assume it ran.",
                 }[name],
                 "parameters": (
-                    {
+                    ExecuteCodeInput.model_json_schema()
+                    if name == "execute_code"
+                    else {
                         "type": "object",
                         "properties": {"code": {"type": "string", "maxLength": 32768}},
                         "required": ["code"],

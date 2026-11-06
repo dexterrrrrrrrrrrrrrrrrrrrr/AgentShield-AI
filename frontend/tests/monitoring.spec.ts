@@ -45,7 +45,7 @@ test("real WebSocket monitoring, stored analytics, authorized approval rejection
   const created = await post(page, "/api/agent/sessions", {
     provider: "groq",
     model: "llama-3.1-8b-instant",
-    allowed_tools: ["calculator"],
+    allowed_tools: ["calculator", "python_sandbox"],
   });
   expect(created.status()).toBe(201);
   const sid = (await created.json()).id;

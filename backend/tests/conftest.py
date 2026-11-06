@@ -69,6 +69,7 @@ def client(settings):
         yield client
         for collection in (
             "users",
+            "oauth_states",
             "sessions",
             "security_events",
             "agent_sessions",

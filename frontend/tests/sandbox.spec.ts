@@ -36,10 +36,10 @@ test("mocked sandbox approval, output, history, and unavailable UI", async ({
     .getByRole("button", { name: "Sandbox", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Python Sandbox" }),
+    page.getByRole("heading", { name: "Code Sandbox" }),
   ).toBeVisible();
   await page.getByLabel("Python code").fill('print("test")');
-  await page.getByRole("button", { name: "Execute Python" }).click();
+  await page.getByRole("button", { name: "Run Code" }).click();
   await expect(
     page.getByRole("heading", { name: "Review exact execution request" }),
   ).toBeVisible();
@@ -66,12 +66,12 @@ test("mocked sandbox approval, output, history, and unavailable UI", async ({
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
-  await page.route("**/api/sandbox/readiness", (route) =>
+  await page.route("**/api/sandbox/readiness*", (route) =>
     route.fulfill({ json: { ready: false, code: "SANDBOX_UNAVAILABLE" } }),
   );
   await page.reload();
   await expect(page.getByRole("status")).toContainText("SANDBOX_UNAVAILABLE");
   await expect(
-    page.getByRole("button", { name: "Execute Python" }),
+    page.getByRole("button", { name: "Run Code" }),
   ).toBeDisabled();
 });

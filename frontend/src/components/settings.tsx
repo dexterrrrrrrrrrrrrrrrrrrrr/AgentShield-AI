@@ -116,7 +116,7 @@ export default function Settings() {
       <section className="mt-6 rounded-xl border border-slate-800 p-5">
         <h2 className="text-lg font-medium">Sandbox safety</h2>
         <p className="mt-3 text-sm text-slate-400">
-          Python execution requires independent policy checks and verified
+          Code execution requires independent policy checks and verified
           isolation. This page cannot enable execution or change resource
           limits.
         </p>

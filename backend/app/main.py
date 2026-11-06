@@ -19,6 +19,8 @@ from .guards import strict_json
 from .hosts import HostAdmissionMiddleware
 from .monitoring.api import router as monitor_router
 from .monitoring.events import AuditIntegrityError, Monitor
+from .oauth import GoogleProvider, install_access_filter
+from .oauth import router as oauth_router
 from .sandbox.api import router as sandbox_router
 from .sandbox.manager import SandboxManager
 from .security import Passwords
@@ -89,6 +91,7 @@ class BodyLimitMiddleware:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
+    install_access_filter()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -96,6 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.db = db
         app.state.settings = settings
         try:
+            app.state.google_provider = GoogleProvider(settings)
             app.state.passwords = Passwords()
             app.state.agent_engine = Engine(settings)
             app.state.agent_active = 0
@@ -103,6 +107,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.monitor = Monitor(db, settings)
             yield
         finally:
+            if hasattr(app.state, "google_provider"):
+                await app.state.google_provider.close()
             await client.close()
 
     app = FastAPI(title="AgentShield AI", version="0.2.0", lifespan=lifespan)
@@ -166,6 +172,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ready"}
 
     app.include_router(router)
+    app.include_router(oauth_router)
     app.include_router(agent_router)
     app.include_router(sandbox_router)
     app.include_router(monitor_router)

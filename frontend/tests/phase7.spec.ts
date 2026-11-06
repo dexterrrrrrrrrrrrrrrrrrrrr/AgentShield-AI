@@ -84,7 +84,7 @@ test("settings and tool configuration use real metadata, denied calls are audite
     .getByRole("link", { name: "Playground", exact: true })
     .click();
   const permissions = page.getByRole("group", { name: "Tool permissions" });
-  for (const name of ["calculator", "summarize_text", "python_sandbox"])
+  for (const name of ["calculator", "summarize_text", "python_sandbox", "execute_code"])
     await permissions.getByRole("checkbox", { name, exact: true }).uncheck();
   await permissions
     .getByRole("checkbox", { name: "format_json", exact: true })

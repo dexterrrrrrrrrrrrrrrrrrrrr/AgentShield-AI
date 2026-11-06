@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 const config: NextConfig = {
   output: process.env.BUILD_STANDALONE === "true" ? "standalone" : undefined,
   poweredByHeader: false,
+  // OAuth callbacks contain single-use credentials in their query string.
+  logging: { incomingRequests: { ignore: [/^\/api\/auth\/google\/callback(?:\?|$)/] } },
   async rewrites() {
     const backend = process.env.API_INTERNAL_URL || "http://127.0.0.1:8000";
     return [

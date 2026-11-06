@@ -22,7 +22,9 @@ class SessionInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     provider: Literal["groq", "ollama"] = "groq"
     model: str = Field(min_length=1, max_length=100)
-    allowed_tools: list[str] = Field(default_factory=lambda: list(NAMES), max_length=4)
+    allowed_tools: list[str] = Field(
+        default_factory=lambda: list(NAMES), max_length=len(NAMES)
+    )
 
     @field_validator("allowed_tools")
     @classmethod
@@ -407,17 +409,19 @@ async def send(
             ):
                 raise HTTPException(403, "Tool authorization failed")
 
-        async def sandbox_dispatch(arguments):
+        async def sandbox_dispatch(arguments, tool="python_sandbox"):
             from ..sandbox.policy import CodeRequest
             from ..sandbox.service import SandboxService
 
-            code = CodeRequest.model_validate({**arguments, "agent_session_id": sid})
+            code = CodeRequest.model_validate(
+                {**arguments, "agent_session_id": sid, "tool": tool}
+            )
             return await SandboxService(
                 db,
                 s,
                 request.app.state.sandbox_manager,
                 monitor=request.app.state.monitor,
-                authorize=lambda: authorize_tool("python_sandbox"),
+                authorize=lambda: authorize_tool(tool),
                 agent_turn_id=turn["_id"],
             ).request(uid, code)
 
@@ -511,6 +515,10 @@ async def resolve(
             {
                 "id": eid,
                 "status": status,
+                "tool": execution.get("tool", "python_sandbox"),
+                "language": execution.get("language", "python"),
+                "compile_status": execution.get("compile_status", "not_required"),
+                "compile_stderr": execution.get("compile_stderr", "")[:3000],
                 "approved": execution.get("approval_status") == "approved",
                 "exit_code": execution.get("exit_code"),
                 "stdout": execution.get("stdout", "")[:6000],
@@ -585,7 +593,8 @@ async def resolve(
                     "tool_rejected",
                     agent_id=sid,
                     execution_id=outcome["id"],
-                    tool="python_sandbox",
+                    tool=outcome["tool"],
+                    language=outcome["language"],
                     decision="DENY",
                     result="rejected",
                 )
@@ -640,7 +649,7 @@ async def resolve(
         resolution_events = [
             {
                 "kind": "approval_resolved",
-                "tool": "python_sandbox",
+                "tool": v["tool"],
                 "execution_id": v["id"],
                 "output": redact(
                     json.dumps(v, default=str), credential_values(settings)

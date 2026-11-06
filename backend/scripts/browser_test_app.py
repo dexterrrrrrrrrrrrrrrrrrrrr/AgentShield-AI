@@ -16,6 +16,8 @@ class BrowserProvider:
             return Reply(
                 content="Mocked assistant confirmation: sandbox execution completed."
             )
+        if user.startswith("sandbox multilang"):
+            return Reply(calls=[ToolRequest(name="execute_code", arguments={"language": "c", "code": "#include <stdio.h>\nint main(void) { puts(\"agent compile fixture\"); return 0; }", "stdin": "agent-bound input"})])
         if user.startswith("sandbox phase7"):
             return Reply(
                 calls=[
@@ -53,13 +55,18 @@ def make_app():
             from app.sandbox.manager import SandboxManager
 
             class FakeSandbox:
-                def readiness(self):
+                def readiness(self, language="python"):
                     return {"ready": True, "code": "READY"}
 
-                def execute(self, code):
+                def execute(self, code, language="python", stdin=""):
+                    if code.startswith("#error browser compile fixture"):
+                        return {"status": "failed", "stdout": "", "stderr": "", "exit_code": 1, "duration": 0.01, "compile_status": "failed", "compile_stdout": "", "compile_stderr": "Mocked compiler diagnostic: invalid source", "error_category": "COMPILATION_ERROR"}
                     return {
                         "status": "completed",
-                        "stdout": "Mocked sandbox output\n",
+                        "stdout": "Mocked sandbox output\n" + stdin,
+                        "compile_status": "completed" if language in {"c", "cpp", "java", "typescript"} else "not_required",
+                        "compile_stdout": "Mocked compilation output" if language in {"c", "cpp", "java", "typescript"} else "",
+                        "compile_stderr": "",
                         "stderr": "",
                         "exit_code": 0,
                         "duration": 0.01,

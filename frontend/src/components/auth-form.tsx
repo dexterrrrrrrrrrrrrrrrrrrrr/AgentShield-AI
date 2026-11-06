@@ -3,13 +3,15 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { authPost } from "@/lib/auth-client";
+import { authPost, oauthErrorMessage } from "@/lib/auth-client";
+import GoogleButton from "./google-button";
 
-export default function AuthForm({ mode }: { mode: "login" | "register" }) {
+export default function AuthForm({ mode, oauthError }: { mode: "login" | "register"; oauthError?: string }) {
   const registering = mode === "register";
   const router = useRouter();
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
   const [error, setError] = useState("");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -70,9 +72,14 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
             ? "Start with a secure foundation for your workspace."
             : "Sign in to your AgentShield AI workspace."}
         </p>
+        {oauthError && (
+          <p role="alert" className="mt-5 rounded-lg border border-amber-800 bg-amber-950/20 p-3 text-sm leading-6 text-amber-100">
+            {oauthErrorMessage(oauthError)}
+          </p>
+        )}
         <form onSubmit={submit} className="mt-7 space-y-5">
           <fieldset
-            disabled={loading}
+            disabled={loading || googleBusy}
             className="space-y-5 disabled:opacity-70"
           >
             {registering && (
@@ -159,7 +166,7 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
             <button
               type="submit"
               className="w-full rounded-lg bg-teal-300 px-4 py-3 text-sm font-semibold text-slate-950 hover:bg-teal-200 disabled:cursor-wait"
-              disabled={loading}
+              disabled={loading || googleBusy}
             >
               {loading
                 ? "Please wait…"
@@ -172,6 +179,19 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
             {loading ? "Submitting your request" : ""}
           </p>
         </form>
+        <div className="my-6 flex items-center gap-4 text-xs text-slate-500" aria-hidden="true">
+          <span className="h-px flex-1 bg-slate-800" /> OR <span className="h-px flex-1 bg-slate-800" />
+        </div>
+        <GoogleButton disabled={loading} onBusy={setGoogleBusy} />
+        {!registering && (
+          <details className="mt-5 text-sm text-slate-400">
+            <summary className="cursor-pointer text-teal-300">Forgot password?</summary>
+            <p className="mt-2 text-xs leading-5">
+              Password recovery is not available yet. Contact your deployment administrator for assistance.
+              If you already connected Google in Profile, you can use Continue with Google.
+            </p>
+          </details>
+        )}
         <p className="mt-6 text-center text-sm text-slate-400">
           {registering ? "Already have an account?" : "New to AgentShield?"}{" "}
           <Link
