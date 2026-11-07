@@ -75,6 +75,7 @@ class Providers:
                     api_key=s.groq_api_key.get_secret_value(),
                     timeout=s.agent_provider_timeout,
                     max_retries=0,
+                    # Pin the official origin; ignore environment base-URL overrides.
                     base_url="https://api.groq.com",
                     default_headers={"Accept-Encoding": "identity"},
                     http_client=groq.DefaultAsyncHttpxClient(follow_redirects=False),
