@@ -139,7 +139,27 @@ nav a[aria-current=page] { background:var(--elevated); border-color:var(--border
 .terminal-panel { background:#0d1117 !important; border-top:3px solid var(--blue) !important; }
 .terminal-panel pre { border:1px solid #34343f; color:#d4d4d8; }
 .editor-surface { background:#0d1117; border:2px solid var(--border); }
-.editor-surface textarea { border:0; background:transparent; }
+/* Keep native caret/selection geometry identical to the highlighted overlay.
+   Explicit unlayered rules avoid form reset typography overriding utilities. */
+.editor-surface textarea, .editor-surface pre {
+  font-family:var(--font-code),monospace;
+  font-size:14px;
+  font-weight:400;
+  font-style:normal;
+  line-height:24px;
+  letter-spacing:0;
+  word-spacing:0;
+  font-variant-ligatures:none;
+  font-kerning:none;
+  padding:16px 16px 16px 56px;
+  margin:0;
+  border:0;
+  tab-size:8;
+  white-space:pre;
+  overflow-wrap:normal;
+  word-break:normal;
+}
+.editor-surface textarea { background:transparent; }
 .editor-lines { position:absolute; top:0; bottom:0; left:0; width:42px; padding:16px 8px; text-align:right; overflow:hidden; border-right:1px solid var(--border); color:#a1a1aa; font:12px/24px var(--font-code),monospace; user-select:none; }
 @media (max-width:1100px) { .dashboard-grid { grid-template-columns:1fr; } .playground-grid { grid-template-columns:170px minmax(0,1fr); } }
 @media (max-width:900px) { .desktop-sidebar { display:none; } .workspace-shell { padding-left:0; } .drawer-toggle { display:inline-block; } .workspace-topbar { padding:14px 20px; } }
