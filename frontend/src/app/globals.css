@@ -168,3 +168,32 @@ nav a[aria-current=page] { background:var(--elevated); border-color:var(--border
 
 /* White on the specified electric blue uses large bold text for contrast. */
 button[class*="bg-teal-300"], .button-primary { font-size:19px; line-height:1.3; font-weight:700; }
+
+/* Shared workspace polish; editor geometry and security-state colors stay intact. */
+.workspace-content main > header { gap:20px; }
+.workspace-content h1 { line-height:1.15; text-wrap:balance; }
+.workspace-content p { overflow-wrap:anywhere; }
+.workspace-content label, .workspace-content legend { line-height:1.5; }
+.workspace-content input:not([type=checkbox]), .workspace-content select { min-height:44px; }
+.workspace-content button:disabled { cursor:not-allowed; }
+.desktop-sidebar nav a, .navigation-drawer nav a { min-height:46px; }
+.desktop-sidebar nav a:hover, .navigation-drawer nav a:hover { background:var(--elevated,#22222b); }
+.account-link { overflow-wrap:anywhere; line-height:1.6; }
+.workspace-topbar { gap:16px; flex-wrap:wrap; }
+.command-trigger { display:flex; align-items:center; gap:12px; padding:8px 12px; min-height:40px; border:1px solid var(--border); border-radius:4px; color:var(--muted); font-size:12px; background:var(--surface); }
+.command-trigger:hover { color:var(--text); border-color:var(--blue); }
+.command-trigger kbd { font:10px var(--font-code),monospace; padding:3px 5px; border:1px solid var(--border); border-radius:2px; }
+.command-dialog { margin:12vh auto auto; padding:0; width:min(520px,calc(100vw - 32px)); max-height:75vh; overflow:auto; border:2px solid var(--border); border-radius:4px; color:var(--text); background:var(--surface); box-shadow:6px 6px 0 var(--ink); }
+.command-dialog::backdrop { background:rgb(0 0 0 / .7); }
+.command-inner { padding:20px; }
+.command-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+.command-heading h2 { font-size:18px; }
+.command-heading button { min-width:44px; min-height:40px; border:1px solid var(--border); border-radius:4px; font-size:12px; }
+.command-inner input { display:block; width:100%; padding:12px; background:var(--background); border:2px solid var(--border); color:var(--text); font:inherit; }
+.command-inner [role=listbox] { margin-top:12px; display:grid; gap:4px; }
+.command-inner [role=option] { display:flex; justify-content:space-between; text-align:left; width:100%; padding:12px; min-height:44px; border:1px solid transparent; border-radius:4px; font-size:14px; }
+.command-inner [role=option][aria-selected=true] { border-color:var(--blue); background:var(--background); color:var(--text); }
+.command-empty { padding:24px 0; color:var(--muted); font-size:14px; }
+.command-hint { padding-top:16px; margin-top:12px; border-top:1px solid var(--border); color:var(--muted); font:11px/1.5 var(--font-code),monospace; }
+@media (max-width:600px) { .workspace-topbar .identity-label { display:none; } .command-trigger { gap:6px; } .command-trigger kbd { display:none; } .command-inner { padding:16px; } }
+@media (prefers-reduced-motion:no-preference) { .command-trigger, .command-inner [role=option] { transition:background-color .12s,border-color .12s,color .12s; } }

@@ -38,7 +38,7 @@ export default defineConfig({
         LOGIN_IP_LIMIT: "100",
         // Larger deterministic journey suite; production defaults and backend
         // rate-limit regression tests remain unchanged.
-        REGISTER_IP_LIMIT: "30",
+        REGISTER_IP_LIMIT: "60",
       },
     },
     {
