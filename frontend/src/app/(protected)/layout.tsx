@@ -1,4 +1,5 @@
 import { authenticatedUser } from "@/lib/auth-server";
+import WorkspaceNav from "@/components/workspace-nav";
 import { SessionProvider } from "@/components/session";
 
 export const dynamic = "force-dynamic";
@@ -20,5 +21,5 @@ export default async function ProtectedLayout({
         </p>
       </main>
     );
-  return <SessionProvider user={user}>{children}</SessionProvider>;
+  return <SessionProvider user={user}><div className="workspace-shell"><WorkspaceNav /><div id="workspace-content" tabIndex={-1} className="workspace-content">{children}</div></div></SessionProvider>;
 }

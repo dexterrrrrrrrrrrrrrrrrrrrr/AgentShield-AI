@@ -33,7 +33,7 @@ test("mocked sandbox approval, output, history, and unavailable UI", async ({
   ).toBeVisible();
   await page
     .getByRole("navigation")
-    .getByRole("button", { name: "Sandbox", exact: true })
+    .getByRole("link", { name: "Sandbox", exact: true })
     .click();
   await expect(
     page.getByRole("heading", { name: "Code Sandbox" }),

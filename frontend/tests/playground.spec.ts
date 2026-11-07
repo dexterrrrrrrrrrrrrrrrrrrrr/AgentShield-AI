@@ -33,7 +33,7 @@ test("playground tool run, persisted history, errors, retry, clearing and mobile
   ).toBeVisible();
   await page
     .getByRole("navigation")
-    .getByRole("button", { name: "Agent Playground", exact: true })
+    .getByRole("link", { name: "Playground", exact: true })
     .click();
   await expect(page).toHaveURL(/\/playground$/);
   await page.route("**/api/agent/sessions/*/messages", async (route) => {
@@ -111,4 +111,45 @@ test("playground tool run, persisted history, errors, retry, clearing and mobile
 test("unauthenticated playground redirects to login", async ({ page }) => {
   await page.goto("/playground");
   await expect(page).toHaveURL(/\/login$/);
+});
+
+test("identical answers distinguish actual calculator events from direct replies after reload", async ({ page }) => {
+  const csrf = await page.request.get("/api/auth/csrf");
+  const headers = { Origin: "http://localhost:3001", "X-CSRF-Token": (await csrf.json()).csrf_token };
+  const email = `timeline-${randomUUID()}@example.com`;
+  const password = "a long browser passphrase";
+  expect((await page.request.post("/api/auth/register", { headers, data: {
+    full_name: "Timeline Tester", email, password, confirm_password: password,
+  } })).status()).toBe(201);
+  expect((await page.request.post("/api/auth/login", { headers, data: { email, password } })).status()).toBe(200);
+  await page.goto("/playground");
+  await expect(page.getByLabel("Model")).not.toContainText("Loading…");
+  const noTool = "No tool request was recorded for this turn. The model can answer directly even when tools are enabled.";
+  for (const [prompt, invokes] of [
+    ["Direct answer fixture", false],
+    ["Use the calculator tool to evaluate (987654 * 321) / 7.", true],
+  ] as const) {
+    await page.getByLabel("Task or instructions").fill(prompt);
+    const response = page.waitForResponse(r => r.request().method() === "POST" && /\/sessions\/[^/]+\/messages$/.test(r.url()));
+    await page.getByRole("button", { name: "Send message" }).click();
+    const turn = await (await response).json();
+    expect(turn.status).toBe("completed");
+    expect(turn.assistant_content).toBe("45290990.571428575");
+    expect(turn.events.some((e: { kind: string }) => e.kind === "tool_response")).toBe(invokes);
+    await expect(page.getByLabel("Task or instructions")).toBeEnabled();
+  }
+  async function verifyTimeline() {
+    const turns = page.locator('article');
+    await expect(turns).toHaveCount(2);
+    await expect(turns.nth(0).getByText(noTool)).toBeVisible();
+    await expect(turns.nth(1).getByText(noTool)).toHaveCount(0);
+    await turns.nth(1).getByText("Tool execution timeline").click();
+    await expect(turns.nth(1).getByRole("listitem").filter({ hasText: /^tool_request · calculator/ })).toContainText('Input: {"text": "(987654 * 321) / 7"}');
+    await expect(turns.nth(1).getByRole("listitem").filter({ hasText: /^tool_response · calculator/ })).toBeVisible();
+    await expect(turns.nth(1).getByText("Output: 45290990.571428575")).toBeVisible();
+    await expect(turns.nth(0).getByText("tool_response · calculator")).toHaveCount(0);
+  }
+  await verifyTimeline();
+  await page.reload();
+  await verifyTimeline();
 });

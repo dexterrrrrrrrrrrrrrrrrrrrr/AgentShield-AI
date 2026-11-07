@@ -1,13 +1,13 @@
 "use client";
-import WorkspaceNav from "./workspace-nav";
 import CodeEditor from "./code-editor";
+import { StatusBadge } from "./ui";
 import { protectedApi } from "@/lib/protected-api";
 import { languageName, registeredLanguage, STARTER_CODE, type LanguageId } from "@/lib/languages";
 import { useEffect, useState } from "react";
 
 type Language = { id: string; display_name: string; extension: string; version: string; compilation_required: boolean; limits: Record<string, number> };
 type Execution = {
-  id: string; language?: string; status: string; policy_decision: string; request_hash: string;
+  id: string; execution_policy?: string; language?: string; status: string; policy_decision: string; request_hash: string;
   stdout: string; stderr: string; exit_code: number | null; duration: number | null;
   execution_duration_ms?: number | null; compile_status?: string; compile_stdout?: string; compile_stderr?: string;
   error_category?: string; approval_request?: { language?: string; code: string; stdin?: string };
@@ -33,6 +33,7 @@ export default function Sandbox() {
   const [error, setError] = useState("");
   const [readinessMessage, setReadinessMessage] = useState("");
   const [history, setHistory] = useState<Execution[]>([]);
+  const [selectionSource, setSelectionSource] = useState("history");
   const [selected, setSelected] = useState<Execution | null>(null);
   const [more, setMore] = useState(false);
   const code = drafts[language];
@@ -41,7 +42,7 @@ export default function Sandbox() {
     let live = true;
     api("/languages").then((data) => { if (live) { setLanguages(data.languages); setExecutionPolicy(data.execution_policy || "REQUIRE_APPROVAL"); } }).catch((cause) => { if (live) setError(cause.message); });
     return () => { live = false; };
-  }, []);
+  }, [attempt]);
   useEffect(() => {
     let live = true;
     api(`/readiness?language=${language}`).then((data) => {
@@ -60,10 +61,14 @@ export default function Sandbox() {
     const data = await api(historyPath(offset, filter));
     setHistory(data.executions); setPageOffset(offset); setMore(data.executions.length === 20);
   }
-  async function perform(action: () => Promise<Execution>) {
+  async function perform(action: () => Promise<Execution>, fresh = false) {
     setBusy(true); setError("");
+    if (fresh) setSelected(null);
+    setSelectionSource(fresh ? "new submission" : "stored execution");
     try {
       const result = await action();
+      setSelected(result);
+      if (fresh && result.execution_policy) setExecutionPolicy(result.execution_policy);
       if (result.status === "unavailable" && (result.language || "python") === language) setReady(false);
       setSelected(await api(`/executions/${result.id}`));
       await load();
@@ -74,13 +79,14 @@ export default function Sandbox() {
   const inputBytes = new TextEncoder().encode(stdin).length;
   return (
     <main className="mx-auto max-w-6xl px-5 py-8">
-      <WorkspaceNav />
+      <p className="eyebrow">EXECUTION / ISOLATED RUNTIME</p>
       <h1 className="mt-5 text-3xl font-semibold">Code Sandbox</h1>
       <p className="mt-3 text-sm text-slate-400">{executionPolicy === "AUTO_EXECUTE" ? "Trusted local automatic execution. Run Code starts an isolated job without an approval step." : "Isolated code execution with deterministic policy and explicit approvals."} Compilation stays inside the sandbox. Never enter secrets.</p>
       <p role="status" className="mt-5 rounded-lg border border-slate-700 p-4 text-sm">
         {checking ? `Checking ${languageName(language)} sandbox isolation…` : busy ? "Running..." : ready ? `${languageName(language)} sandbox readiness checks passed` : "SANDBOX_UNAVAILABLE · Execution is disabled until effective isolation checks pass."}
         {!checking && !ready && readinessMessage && <span className="mt-2 block text-slate-400">{readinessMessage}</span>}
       </p>
+      <div className="mt-3"><StatusBadge>{executionPolicy === "AUTO_EXECUTE" ? "AUTO_EXECUTE · trusted local" : executionPolicy.replaceAll("_", " ")}</StatusBadge></div>
       <button disabled={busy || checking} onClick={() => { setChecking(true); setReady(false); setAttempt((value) => value + 1); }} className={`mt-3 ${smallButton}`}>Refresh sandbox status</button>
       {error && <p role="alert" className="mt-4 text-red-300">{error}</p>}
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_240px]">
@@ -98,16 +104,17 @@ export default function Sandbox() {
           <textarea id="stdin" value={stdin} onChange={(event) => setStdin(event.target.value)} disabled={busy} rows={3} maxLength={8192} spellCheck={false} className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-sm" />
           <p className="mt-1 text-xs text-slate-400">{inputBytes}/8192 input bytes · Sent as input data, never as commands.</p>
           <div className="mt-4 flex flex-wrap gap-3">
-            <button disabled={busy || checking || !ready || executionPolicy === "DENY" || !configuration || bytes > 32768 || inputBytes > 8192 || !code.trim()} onClick={() => perform(() => api("/execute", { language, source_code: code, stdin, tool: "execute_code" }))} className="rounded-lg bg-teal-300 px-5 py-3 font-semibold text-slate-950 disabled:opacity-40">{busy ? "Running..." : "Run Code"}</button>
+            <button disabled={busy || checking || !ready || executionPolicy === "DENY" || !configuration || bytes > 32768 || inputBytes > 8192 || !code.trim()} onClick={() => perform(() => api("/execute", { language, source_code: code, stdin, tool: "execute_code" }), true)} className="rounded-lg bg-teal-300 px-5 py-3 font-semibold text-slate-950 disabled:opacity-40">{busy ? "Running..." : "Run Code"}</button>
             <button disabled={busy || !selected} onClick={() => setSelected(null)} className={smallButton}>Clear Output</button>
           </div>
-          {selected && <article className="mt-6 space-y-4 rounded-xl border border-slate-800 p-5">
+          {selected && <article className="terminal-panel mt-6 space-y-4 rounded-xl border border-slate-800 p-5">
             <h2 className="text-lg">Execution {selected.id.slice(0, 8)} · {languageName(selected.language)}</h2>
-            <p>Status: {selected.status} · Policy: {selected.policy_decision}</p>
-            {executionPolicy === "AUTO_EXECUTE" && selected.status === "pending_approval" && <p className="text-sm text-amber-300">This older request was not executed automatically. Review it in Monitoring or submit a new request.</p>}
+            <p className="text-xs text-slate-400">Result source: {selectionSource} · Request policy: {selected.execution_policy || selected.policy_decision}</p>
+            <p><StatusBadge tone={selected.status === "completed" ? "success" : selected.status === "pending_approval" ? "warning" : "error"}>Status: {selected.status}</StatusBadge> · Policy: {selected.policy_decision}</p>
+            {executionPolicy === "AUTO_EXECUTE" && selected.status === "pending_approval" && <p className="text-sm text-amber-300">This request requires approval under its recorded policy. Current automatic mode does not authorize or replay it.</p>}
             {selected.error_category && <p role="alert">{selected.error_category}</p>}
             <p className="text-sm">Exit code: {selected.exit_code ?? "—"} · Duration: {selected.execution_duration_ms != null ? `${selected.execution_duration_ms} ms` : selected.duration != null ? `${selected.duration} seconds` : "—"} · Compilation: {selected.compile_status || "not_required"}</p>
-            {executionPolicy !== "AUTO_EXECUTE" && selected.approval_request && selected.status === "pending_approval" && <section className="rounded border border-amber-700 p-4">
+            {selected.approval_request && selected.status === "pending_approval" && <section className="rounded border border-amber-700 p-4">
               <h3 className="font-semibold">Review exact execution request</h3>
               <p className="mt-2 text-sm">Language: {languageName(selected.approval_request.language)}. Approval rechecks permissions and isolation for this request.</p>
               <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs">{selected.approval_request.code}</pre>

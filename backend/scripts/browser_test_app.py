@@ -27,6 +27,12 @@ class BrowserProvider:
                     )
                 ]
             )
+        if user == "markdown ui fixture":
+            return Reply(content='**Example**\n\n```python\nprint("hello")\n```\n\n<img src=x onerror=alert(1)>')
+        if user in ("Use the calculator tool to evaluate (987654 * 321) / 7.", "Direct answer fixture"):
+            if user.startswith("Use the calculator") and messages[-1]["role"] != "tool":
+                return Reply(calls=[ToolRequest(name="calculator", arguments={"text": "(987654 * 321) / 7"})])
+            return Reply(content="45290990.571428575")
         if user.startswith("<img"):
             return Reply(
                 content='<svg onload="document.body.dataset.phase6Attack=1">untrusted model output</svg>'

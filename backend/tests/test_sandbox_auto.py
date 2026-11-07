@@ -119,8 +119,10 @@ def test_auto_keeps_auth_csrf_validation_quota_and_ownership(client):
     assert len(manager.calls) == 1
 
 
-def test_auto_does_not_automatically_execute_agent_requests(client):
+@pytest.mark.parametrize("mode", ["auto", "allow", "approval"])
+def test_auto_does_not_automatically_execute_agent_requests(client, mode):
     manager = auto_setup(client)
+    client.app.state.settings.sandbox_policy = mode
     uid = db_call(client, 'users', 'find_one', {'email': 'alice@example.com'})['_id']
     sid = 'b' * 32
     db_call(client, 'agent_sessions', 'insert_one', {'_id': sid, 'user_id': uid, 'allowed_tools': ['execute_code']})
@@ -161,3 +163,20 @@ def test_auto_revalidates_after_admission_before_dispatch(client, monkeypatch, c
     monkeypatch.setattr(SandboxService, 'run', changed)
     assert submit(client).status_code in (401, 403)
     assert not manager.calls
+
+
+def test_fresh_direct_submission_matches_auto_metadata_and_ignores_old_history(client):
+    manager = auto_setup(client)
+    s = client.app.state.settings
+    s.sandbox_policy = 'approval'
+    old = submit(client).json()
+    assert old['status'] == 'pending_approval'
+    s.sandbox_policy = 'auto'
+    assert client.get('/api/sandbox/languages').json()['execution_policy'] == 'AUTO_EXECUTE'
+    fresh = submit(client).json()
+    assert fresh['id'] != old['id']
+    assert fresh['status'] == 'completed'
+    assert fresh['execution_policy'] == 'AUTO_EXECUTE'
+    assert fresh['policy_decision'] == 'ALLOW'
+    assert len(manager.calls) == 1
+    assert client.get('/api/sandbox/executions/' + old['id']).json()['status'] == 'pending_approval'

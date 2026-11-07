@@ -651,6 +651,9 @@ async def resolve(
                 "kind": "approval_resolved",
                 "tool": v["tool"],
                 "execution_id": v["id"],
+                "status": v["status"],
+                "approved": v["approved"],
+                "duration": v["duration"],
                 "output": redact(
                     json.dumps(v, default=str), credential_values(settings)
                 )[:1000],

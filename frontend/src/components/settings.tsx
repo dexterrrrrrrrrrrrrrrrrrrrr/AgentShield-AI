@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
+import { StatusBadge } from "./ui";
 import { useEffect, useState } from "react";
-import WorkspaceNav from "./workspace-nav";
 import { agentApi } from "@/lib/agent-client";
 import { monitoringApi } from "@/lib/monitor-client";
 
@@ -50,7 +50,6 @@ export default function Settings() {
   }
   return (
     <main className="mx-auto max-w-5xl px-5 py-8">
-      <WorkspaceNav />
       <p className="text-xs tracking-widest text-teal-300">
         WORKSPACE CONFIGURATION
       </p>
@@ -78,7 +77,7 @@ export default function Settings() {
             key={p.id}
             className="rounded-xl border border-slate-800 bg-[#0d1422] p-5"
           >
-            <h2 className="text-lg font-semibold capitalize">{p.id}</h2>
+            <div className="section-heading"><h2 className="text-lg font-semibold capitalize">{p.id}</h2><StatusBadge tone={p.enabled && p.configured ? "info" : "warning"}>{p.enabled && p.configured ? "Configured" : "Setup required"}</StatusBadge></div>
             <p className="mt-3 break-words font-mono text-sm text-slate-300">
               {p.model}
             </p>
