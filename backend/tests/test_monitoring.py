@@ -377,3 +377,28 @@ def test_monitor_timing_configuration_rejects_inconsistent_settings(settings):
         Settings(
             _env_file=None, jwt_secret=settings.jwt_secret, monitor_pong_seconds=10
         )
+
+
+def test_summary_distinguishes_retained_turns_and_expired_requests_without_mutation(client):
+    from datetime import timedelta
+    from app.security import utcnow
+    uid = user(client)
+    states = ['completed', 'failed', 'interrupted', 'awaiting_approval', 'running']
+    for turn, state in enumerate(states):
+        db_call(client, 'agent_messages', 'insert_one', {'user_id': uid, 'session_id': 'a'*32, 'turn': turn, 'status': state})
+    old = {'_id': 'expired-before-continuation', 'user_id': uid, 'status': 'pending_approval',
+           'approval_status': 'pending', 'approval_expires_at': utcnow()-timedelta(hours=1)}
+    db_call(client, 'execution_logs', 'insert_one', old)
+    db_call(client, 'execution_logs', 'insert_one', {'user_id': uid, 'status': 'rejected', 'error_category': 'APPROVAL_EXPIRED'})
+    for state in ['completed', 'failed', 'rejected', 'denied', 'pending_approval']:
+        db_call(client, 'execution_logs', 'insert_one', {'user_id': uid, 'status': state})
+    db_call(client, 'execution_logs', 'insert_one', {'user_id': 'f'*32, 'status': 'completed'})
+    data = client.get('/api/monitor/summary').json()
+    a = data['agent_executions']
+    assert a['total'] == sum(a['by_status'].values()) == 5
+    assert a['successful'] == 1 and a['failed'] == 2
+    assert a['by_status']['awaiting_approval'] == 1
+    assert data['sandbox_executions'] == {'total': 7, 'by_status': {
+        'expired': 2, 'completed': 1, 'failed': 1, 'rejected': 1, 'denied': 1, 'pending_approval': 1}}
+    assert data['approvals']['expired'] == 2
+    assert db_call(client, 'execution_logs', 'find_one', {'_id': old['_id']})['status'] == 'pending_approval'

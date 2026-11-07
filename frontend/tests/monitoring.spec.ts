@@ -40,6 +40,8 @@ test("real WebSocket monitoring, stored analytics, authorized approval rejection
     .getByRole("navigation")
     .getByRole("link", { name: "Monitoring", exact: true })
     .click();
+  await expect(page.getByText("Agent turns: No stored turns")).toBeVisible();
+  await expect(page.getByText(/not a current error rate/)).toBeVisible();
   await expect(page).toHaveURL(/\/monitoring$/);
   await expect(page.getByRole("status")).toHaveText("Live");
   const created = await post(page, "/api/agent/sessions", {

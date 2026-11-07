@@ -25,7 +25,7 @@ router = APIRouter(prefix="/api/monitor", tags=["Monitoring"])
 
 async def grouped(collection, query, field):
     cursor = await collection.aggregate(
-        [{"$match": query}, {"$group": {"_id": "$" + field, "count": {"$sum": 1}}}]
+        [{"$match": query}, {"$group": {"_id": "$" + field if isinstance(field, str) else field, "count": {"$sum": 1}}}]
     )
     rows = await cursor.to_list(length=30)
     return {v["_id"]: v["count"] for v in rows}
@@ -41,7 +41,18 @@ async def summary(
     db = request.app.state.db
     await limit_attempts(request, "monitor_read", uid, 360)
     agents = await grouped(db.agent_messages, {"user_id": uid}, "status")
-    sandbox = await grouped(db.execution_logs, {"user_id": uid}, "status")
+    now = utcnow()
+    # Read-time classification only: never rewrite historical execution outcomes.
+    expired_condition = {"$or": [
+        {"$eq": ["$error_category", "APPROVAL_EXPIRED"]},
+        {"$and": [
+            {"$eq": ["$approval_status", "pending"]},
+            {"$ne": [{"$ifNull": ["$approval_expires_at", None]}, None]},
+            {"$lte": ["$approval_expires_at", now]},
+        ]},
+    ]}
+    sandbox = await grouped(db.execution_logs, {"user_id": uid},
+                            {"$cond": [expired_condition, "expired", "$status"]})
     approvals = await grouped(
         db.execution_logs,
         {"user_id": uid, "approval_status": {"$exists": True}},
@@ -58,13 +69,7 @@ async def summary(
     pending = await db.sandbox_approvals.count_documents(
         {"user_id": uid, "state": "pending", "expires_at": {"$gt": utcnow()}}
     )
-    expired = await db.execution_logs.count_documents(
-        {
-            "user_id": uid,
-            "approval_status": "pending",
-            "approval_expires_at": {"$lte": utcnow()},
-        }
-    )
+    expired = sandbox.get("expired", 0)
     blocked = await db.security_events.count_documents(
         {"user_id": uid, "kind": "monitor_event", "event.kind": "tool_rejected"}
     )
@@ -92,7 +97,7 @@ async def summary(
             }
             for a in active
         ],
-        "scope": "Current stored execution records; monitoring security events retained seven days",
+        "scope": "All currently stored agent turns, including historical attempts; not a current error rate. Failed includes interrupted turns and failed approval continuations. Other turn states appear below. Blocked tool requests count retained rejection events, not additional agent executions; security events retain seven days.",
     }
 
 
