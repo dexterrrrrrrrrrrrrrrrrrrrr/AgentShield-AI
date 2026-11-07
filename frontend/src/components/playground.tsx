@@ -25,7 +25,7 @@ type Session = {
   status: string;
   allowed_tools: string[];
 };
-type Event = { kind: string; tool?: string; input?: string; output?: string };
+type Event = { kind: string; tool?: string; input?: string; output?: string; status?: string; approved?: boolean; duration?: number };
 type Turn = {
   id: string;
   user_content: string;
@@ -452,6 +452,9 @@ export default function Playground() {
                       >
                         {event.kind}
                         {event.tool ? ` · ${event.tool}` : ""}
+                        {event.status && <p>Execution: {event.status}</p>}
+                        {event.approved !== undefined && <p>Approval: {event.approved ? "Approved" : "Not approved"}</p>}
+                        {typeof event.duration === "number" && Number.isFinite(event.duration) && <p>Duration: {event.duration.toFixed(3)} s</p>}
                         {event.input && (
                           <pre className="whitespace-pre-wrap">
                             Input: {event.input}

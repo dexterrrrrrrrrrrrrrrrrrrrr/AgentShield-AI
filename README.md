@@ -175,3 +175,36 @@ formatting and Groq error handling are described in
 [the redesign and Groq validation guide](docs/neo-brutalism-groq.md). It includes
 non-destructive rebuild commands for the existing `agentshield-ai-v7` deployment
 and clearly separates mocked tests from pending live provider verification.
+
+## Phase 8 security verification (2026-11-07)
+
+```mermaid
+flowchart LR
+  Browser[Authenticated Next.js UI] --> API[FastAPI: CSRF, ownership, quotas]
+  API --> Agent[LangGraph: scoped tools]
+  Agent --> Policy[Policy and exact-request approval]
+  Policy --> Executor[Private authenticated executor]
+  Executor --> Job[Short-lived isolated Docker job]
+  API --> DB[(MongoDB: sessions, approvals, execution history)]
+  Policy --> DB
+  API --> Monitor[Signed audit events and user-scoped WebSocket]
+  Monitor --> Browser
+```
+
+The public backend has no Docker daemon socket. The executor remains a privileged
+trust boundary because its daemon access can control the host; ordinary containers
+are not an escape-proof boundary for hostile public code. Use dedicated worker
+VMs or stronger isolation before accepting public adversarial workloads.
+
+Approval records are persisted, expire, bind source/stdin/language/runtime/limits,
+and are atomically consumed once. A restarted backend must still validate the
+pending record and current identity. Resolving a Playground turn reads its recorded
+execution outcome; it does not replay code. Status, approval outcome and duration
+are now explicit persisted timeline fields, including after reload/resolution.
+Pending turns still require **Continue after decision** to refresh their outcome.
+
+See [current verification evidence and Mac checklist](docs/phase8-security-verification.md).
+Existing local setup, technology stack, testing commands and deployment guidance
+above remain applicable. Preserve `.env.compose`, executor credentials, JWT/audit
+keys and MongoDB volumes. No deployment or data migration is required by these
+additive timeline fields; older records continue rendering without them.

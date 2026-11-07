@@ -108,6 +108,9 @@ def test_pause_approve_resolve_updates_original_turn_without_code_replay(client)
         and result.json()["pending_execution_ids"] == []
     )
     assert result.json()["duration"] >= turn["duration"]
+    event = next(e for e in result.json()["events"] if e["kind"] == "approval_resolved")
+    assert event["status"] == "completed" and event["approved"] is True
+    assert event["duration"] == 0.01
     assert len(provider.calls) == 2 and provider.calls[-1]["allowed"] == []
     assert "mock output" in json.dumps(provider.calls[-1]["messages"])
     assert resolve(client, sid, turn["id"]).status_code == 409
@@ -479,3 +482,26 @@ def test_lost_lease_prevents_a_tool_dispatch(client):
         db_call(client, "agent_sessions", "find_one", {"_id": sid})["lease_holder"]
         == "recovered-holder"
     )
+
+
+def test_approval_survives_application_restart_without_replay(client):
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+    from app.sandbox.manager import SandboxManager
+    from test_sandbox import MockAdapter
+    sid, turn, item, original, provider = pause(client)
+    assert original.codes == []
+    restarted = create_app(client.app.state.settings)
+    with TestClient(restarted) as other:
+        other.cookies.update(client.cookies)
+        adapter = MockAdapter()
+        restarted.state.sandbox_manager = SandboxManager(client.app.state.settings, adapter)
+        assert other.get(f"/api/agent/sessions/{sid}/messages").json()["messages"][0]["status"] == "awaiting_approval"
+        assert adapter.codes == []
+        assert approve(other, item, request_hash="f" * 64).status_code == 409
+        assert adapter.codes == []
+        assert approve(other, item).status_code == 200
+        assert approve(other, item).status_code == 409
+        assert adapter.codes == ["print(1)"]
+    assert approve(client, item).status_code == 409
+    assert original.codes == []
