@@ -113,6 +113,8 @@ def evaluate(
 def policy_mode(settings, *, agent_request=False):
     """Only direct Code Sandbox requests opt in to trusted-local automation."""
     if settings.sandbox_policy != "auto":
+        if agent_request and settings.sandbox_policy == "allow":
+            return "approval"
         return settings.sandbox_policy
     # Recheck at execution time too; never rely on frontend metadata or startup alone.
     if not settings.sandbox_auto_allowed:

@@ -119,8 +119,10 @@ def test_auto_keeps_auth_csrf_validation_quota_and_ownership(client):
     assert len(manager.calls) == 1
 
 
-def test_auto_does_not_automatically_execute_agent_requests(client):
+@pytest.mark.parametrize("mode", ["auto", "allow", "approval"])
+def test_auto_does_not_automatically_execute_agent_requests(client, mode):
     manager = auto_setup(client)
+    client.app.state.settings.sandbox_policy = mode
     uid = db_call(client, 'users', 'find_one', {'email': 'alice@example.com'})['_id']
     sid = 'b' * 32
     db_call(client, 'agent_sessions', 'insert_one', {'_id': sid, 'user_id': uid, 'allowed_tools': ['execute_code']})
