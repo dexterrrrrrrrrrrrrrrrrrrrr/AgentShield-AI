@@ -76,3 +76,22 @@ test("auto mode stays disabled when readiness fails and shows submission failure
   await expect(page.locator("p[role=alert]")).toContainText("SANDBOX_UNAVAILABLE");
   await expect(page.locator("article")).toHaveCount(0);
 });
+
+test("fresh approval response overrides stale auto metadata without automatic approval", async ({ page }) => {
+  await signIn(page); // Deliberately stale AUTO metadata; real backend uses approval.
+  await page.goto("/sandbox");
+  await expect(page.getByText("AUTO_EXECUTE · trusted local")).toBeVisible();
+  const posted = page.waitForResponse(r => r.url().endsWith("/api/sandbox/execute") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "Run Code", exact: true }).click();
+  const response = await posted;
+  const payload = response.request().postDataJSON();
+  expect(Object.keys(payload).sort()).toEqual(["language", "source_code", "stdin", "tool"]);
+  const result = await response.json();
+  expect(result.status).toBe("pending_approval");
+  expect(result.execution_policy).toBe("REQUIRE_APPROVAL");
+  await expect(page.getByText("AUTO_EXECUTE · trusted local")).toHaveCount(0);
+  await expect(page.locator("article")).toContainText("Result source: new submission");
+  await expect(page.locator("article")).toContainText("Policy: REQUIRE_APPROVAL");
+  await expect(page.getByRole("button", { name: "Approve exact request once" })).toBeVisible();
+  expect((await (await page.request.get(`/api/sandbox/executions/${result.id}`)).json()).status).toBe("pending_approval");
+});
