@@ -197,3 +197,23 @@ button[class*="bg-teal-300"], .button-primary { font-size:19px; line-height:1.3;
 .command-hint { padding-top:16px; margin-top:12px; border-top:1px solid var(--border); color:var(--muted); font:11px/1.5 var(--font-code),monospace; }
 @media (max-width:600px) { .workspace-topbar .identity-label { display:none; } .command-trigger { gap:6px; } .command-trigger kbd { display:none; } .command-inner { padding:16px; } }
 @media (prefers-reduced-motion:no-preference) { .command-trigger, .command-inner [role=option] { transition:background-color .12s,border-color .12s,color .12s; } }
+
+/* One decorative layer, above the body backdrop but behind all page content. */
+body { isolation:isolate; }
+/* Retain the same body color while revealing stardust outside the opaque form. */
+.auth-page { background:transparent; }
+.digital-stardust { position:fixed; inset:0; z-index:-1; overflow:hidden; pointer-events:none; user-select:none; contain:strict; }
+.digital-stardust-particle { position:absolute; top:-12px; width:var(--dust-size); height:var(--dust-size); color:var(--dust-color); opacity:0; animation:digital-stardust-fall var(--dust-duration) var(--dust-delay) linear infinite; }
+.digital-stardust-particle::before { content:""; display:block; width:100%; height:100%; border-radius:50%; background:currentColor; box-shadow:0 0 6px currentColor; animation:digital-stardust-shimmer 8s var(--dust-delay) ease-in-out infinite; }
+.digital-stardust-star::before { border-radius:0; clip-path:polygon(50% 0,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0 50%,38% 38%); }
+@keyframes digital-stardust-fall {
+  0% { transform:translate3d(0,0,0); opacity:0; }
+  12% { opacity:var(--dust-opacity); }
+  35% { transform:translate3d(var(--dust-drift),35vh,0); }
+  65% { transform:translate3d(calc(var(--dust-drift) * -.4),65vh,0); }
+  88% { opacity:var(--dust-opacity); }
+  100% { transform:translate3d(var(--dust-drift),calc(100vh + 24px),0); opacity:0; }
+}
+@keyframes digital-stardust-shimmer { 0%,100% { opacity:.6; transform:scale(.85); } 50% { opacity:1; transform:scale(1); } }
+@media (max-width:640px) { .digital-stardust-particle:nth-child(n+11) { display:none; animation:none; } .digital-stardust-particle:nth-child(n+11)::before { animation:none; } }
+@media (prefers-reduced-motion:reduce), print { .digital-stardust { display:none; } .digital-stardust-particle,.digital-stardust-particle::before { animation:none; } }
