@@ -24,7 +24,7 @@ type Event = {
   integrity?: "verified" | "legacy_unverified";
 };
 type Summary = {
-  agent_executions: { total: number; successful: number; failed: number };
+  agent_executions: { total: number; successful: number; failed: number; by_status?: Record<string, number> };
   sandbox_executions: { total: number; by_status: Record<string, number> };
   approvals: Record<string, number>;
   blocked_tool_requests: number;
@@ -457,6 +457,9 @@ export default function Monitoring() {
             </p>
           ) : (
             <>
+              <p className="mt-3 text-sm text-slate-400">
+                Agent turns: {Object.entries(summary.agent_executions.by_status || {}).map(([status, count]) => `${count} ${status === "awaiting_approval" ? "pending approval / continuation" : status.replaceAll("_", " ")}`).join(" · ") || "No stored turns"}
+              </p>
               <p className="mt-3 text-sm text-slate-400">
                 Approvals: {summary?.approvals.approved || 0} approved ·{" "}
                 {summary?.approvals.rejected || 0} rejected ·{" "}
